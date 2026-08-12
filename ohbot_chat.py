@@ -1,6 +1,8 @@
 """Talk to an Ohbot robot powered by a local Ollama model.
 
-    python ohbot_chat.py                      # type to chat
+    python ohbot_chat.py                      # type to chat, with expression
+    python ohbot_chat.py --mode beats         # expression changes mid-reply
+    python ohbot_chat.py --mode plain         # no expression, just speech
     python ohbot_chat.py --voice              # speak instead of typing
     python ohbot_chat.py --persona pirate     # different personality and voice
     python ohbot_chat.py --list-devices       # show audio devices, then exit
@@ -15,11 +17,11 @@ Requires Ollama running locally (`ollama serve`) and the Ohbot plugged in.
 import argparse
 import sys
 
-from ohbot_kit import audio, llm, tts
+from ohbot_kit import audio, expression, llm, tts
 from ohbot_kit import config as config_mod
 from ohbot_kit.robot import Ohbot
 
-BANNER = """Ohbot chat -- model: {model}, voice: {engine}, persona: {persona}
+BANNER = """Ohbot chat -- model: {model}, voice: {engine}, persona: {persona}, mode: {mode}
 Audio in: {mic} | out: {out}
 Type and press enter. Commands: /reset (forget context), /quit
 """
@@ -40,6 +42,12 @@ def parse_args():
     p.add_argument("--max-sentences", type=int, default=None, help="cap on spoken sentences")
     p.add_argument("--input-device", default=None, help="microphone name substring")
     p.add_argument("--output-device", default=None, help="speaker name substring")
+    p.add_argument(
+        "--mode",
+        choices=("empathy", "beats", "plain"),
+        default="empathy",
+        help="empathy: face+gesture per reply (default); beats: per sentence; plain: no expression",
+    )
     p.add_argument("--list-devices", action="store_true", help="list audio devices and exit")
     return p.parse_args()
 
@@ -51,25 +59,45 @@ def pick(cli_value, cfg, path, fallback):
     return cfg.get(path, fallback)
 
 
-def respond(bot, convo, text, max_sentences):
-    """Stream a reply and speak it sentence by sentence."""
-    bot.set_state("thinking")
-    print("Ohbot: ", end="", flush=True)
+def respond(bot, convo, text, max_sentences, mode="empathy"):
+    """Reply, in one of three ways.
 
+    plain    -- streamed sentences, no expression. Fastest, and a statue.
+    empathy  -- one face and movement for the whole reply (default).
+    beats    -- a face and movement per sentence, so it can shift mid-reply.
+    """
+    bot.set_state("thinking")
+    bot.express("thinking")
     said_anything = False
+
     try:
-        for sentence in convo.stream_sentences(text, max_sentences=max_sentences):
-            print(sentence, end=" ", flush=True)
-            bot.speak(sentence)
-            said_anything = True
+        if mode == "plain":
+            print("Ohbot: ", end="", flush=True)
+            for sentence in convo.stream_sentences(text, max_sentences=max_sentences):
+                print(sentence, end=" ", flush=True)
+                bot.speak(sentence)
+                said_anything = True
+            print()
+
+        elif mode == "beats":
+            for beat in convo.respond_with_beats(text, expression.EMOTIONS, max_sentences):
+                print(f"Ohbot [{beat['emotion']}/{beat['gesture']}]: {beat['say']}")
+                bot.speak(beat["say"], emotion=beat["emotion"], gesture=beat["gesture"])
+                said_anything = True
+
+        else:
+            action = convo.respond_with_action(text, expression.EMOTIONS, expression.GESTURE_NAMES)
+            print(f"Ohbot [{action['emotion']}/{action['gesture']}]: {action['say']}")
+            bot.gaze(action.get("gaze_x", 5), action.get("gaze_y", 5))
+            bot.speak(action["say"], emotion=action["emotion"], gesture=action["gesture"])
+            said_anything = bool(action["say"])
+
     except llm.OllamaError as e:
         print(f"\n[llm error] {e}", file=sys.stderr)
-        bot.speak("Sorry, my brain is not responding.")
-    finally:
-        print()
+        bot.speak("Sorry, my brain is not responding.", emotion="confused")
 
     if not said_anything:
-        bot.speak("Sorry, I did not catch that.")
+        bot.speak("Sorry, I did not catch that.", emotion="confused")
 
     bot.set_state("listening")
 
@@ -187,6 +215,7 @@ def main():
             model=model,
             engine=engine,
             persona=persona_name or "default",
+            mode=args.mode,
             mic=audio.device_name(mic_device),
             out=audio.device_name(out_device),
         )
@@ -218,7 +247,7 @@ def main():
                 if args.voice:
                     print(f"You: {text}")
 
-                respond(bot, convo, text, max_sentences)
+                respond(bot, convo, text, max_sentences, args.mode)
         except KeyboardInterrupt:
             print()
         except mic_errors as e:

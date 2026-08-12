@@ -22,6 +22,8 @@ its limits by choosing a silly number here.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from ohbot import ohbot
 
 # Motor numbers, named for readability. All eight exist -- note that TOPLIP (4)
@@ -200,17 +202,54 @@ GESTURE_MEANINGS = {
     "recoil": "alarm or disgust at something unpleasant",
 }
 
+# Which gestures suit which emotion.
+#
+# Offering all twelve at once measurably under-uses the vocabulary: over 20
+# varied prompts the model chose `double_take` 35% of the time and never once
+# chose shiver, recoil, tilt or double_blink -- not even for "I think someone is
+# following me" or "That's disgusting!".
+#
+# Narrowing the choice to gestures that fit the chosen emotion fixes both
+# halves of that. It is a smaller decision for a small model, and it makes an
+# incoherent pairing (a bouncy gesture over sad news) structurally impossible
+# rather than merely discouraged by the prompt.
+#
+# Every gesture must appear at least once here, or it becomes dead code -- a
+# test enforces that.
+EMOTION_GESTURES = {
+    "neutral": ["blink", "nod", "tilt", "look_away"],
+    "happy": ["nod", "perk_up", "lean_in", "blink"],
+    "excited": ["perk_up", "double_take", "nod", "lean_in"],
+    "sad": ["slow_nod", "look_away", "shake"],
+    # No `shake` here, despite "disbelief at something bad" fitting the mood.
+    # Sympathetic replies often turn towards encouragement -- "don't worry,
+    # I'll help you prepare" -- and delivering that with a head shake reads as
+    # "no". Observed on hardware; `tilt` carries the same warmth without the
+    # contradiction.
+    "sympathetic": ["slow_nod", "lean_in", "tilt"],
+    "surprised": ["double_take", "recoil", "perk_up"],
+    "scared": ["shiver", "recoil", "look_away"],
+    "curious": ["tilt", "lean_in", "double_blink", "blink"],
+    "confused": ["double_blink", "tilt", "shake"],
+    "thinking": ["look_away", "double_blink", "tilt"],
+}
+
 # Emotions the LLM is allowed to pick. Kept in one place so the JSON schema and
 # the pose table can never drift apart.
 EMOTIONS = sorted(POSES)
 GESTURE_NAMES = sorted(GESTURES)
 
 
-def gesture_menu() -> str:
-    """ "name (meaning)" lines for the prompt, so choices are made on meaning."""
+def gestures_for(emotion: str) -> list[str]:
+    """Gestures that suit an emotion. Falls back to everything if unmapped."""
+    return EMOTION_GESTURES.get(emotion, GESTURE_NAMES)
+
+
+def gesture_menu(names: Iterable[str] | None = None) -> str:
+    """ "name: meaning" lines for the prompt, so choices are made on meaning."""
     return "\n".join(
         "- {}: {}".format(name, GESTURE_MEANINGS.get(name, "no description"))
-        for name in GESTURE_NAMES
+        for name in (GESTURE_NAMES if names is None else names)
     )
 
 

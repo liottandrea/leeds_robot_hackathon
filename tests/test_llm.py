@@ -204,3 +204,36 @@ class TestModelChecks:
             llm.check_model("phi4-mini")  # bare name matches the :latest tag
             with pytest.raises(llm.OllamaError, match="phi4-mini:latest"):
                 llm.check_model("nonexistent")
+
+
+class TestMalformedSay:
+    """Small models occasionally put something unspeakable in `say`. These are
+    both real outputs observed while testing, not hypotheticals."""
+
+    def test_nested_json_is_unwrapped(self) -> None:
+        """REGRESSION: the model returned the whole action object inside `say`,
+        which the robot would have read aloud as field names and punctuation."""
+        raw = "{ 'emotion': 'sad', 'say': 'I am sorry.', 'gesture': 'shake' }"
+        assert llm.unwrap_say(raw) == "I am sorry."
+
+    def test_json_with_no_say_becomes_empty(self) -> None:
+        """Better silent than reading a dict aloud."""
+        assert llm.unwrap_say("{ 'emotion': 'sad', 'gazex': 5 }") == ""
+
+    def test_normal_text_passes_through(self) -> None:
+        assert llm.unwrap_say("Normal reply. All good!") == "Normal reply. All good!"
+
+    def test_non_string_is_dropped(self) -> None:
+        assert llm.unwrap_say({"say": "x"}) == ""
+        assert llm.unwrap_say(None) == ""
+
+    def test_ascii_emoticons_are_stripped(self) -> None:
+        """REGRESSION: ':(' is not an emoji codepoint, so the emoji stripper
+        missed it and the voice read it out as punctuation."""
+        assert llm.sanitise(":( I am really sorry.") == "I am really sorry."
+        assert llm.sanitise("Great news :-) well done") == "Great news well done"
+
+    def test_emoticon_stripping_spares_real_words(self) -> None:
+        """The pattern must not eat ordinary punctuation or clock times."""
+        assert "8:30" in llm.sanitise("Meet me at 8:30 today.")
+        assert llm.sanitise("Ratio 2:1 here.") == "Ratio 2:1 here."

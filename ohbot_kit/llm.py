@@ -57,6 +57,10 @@ _THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _UNCLOSED_THINK = re.compile(r"<think>.*", re.DOTALL | re.IGNORECASE)
 _MARKDOWN_NOISE = re.compile(r"[*_`#>|~]+")
 _BULLET = re.compile(r"^\s*[-+*•]\s*", re.MULTILINE)
+# ASCII emoticons: ":(", ":-)", ";)" etc. Not emoji codepoints, so the emoji
+# range misses them, and TTS reads them out as punctuation.
+_EMOTICON = re.compile(r"(?<!\w)[:;=8][\-o\*']?[\)\]\(\[dDpP/\\:\}\{@\|]+(?!\w)")
+
 _EMOJI = re.compile(
     "[\U0001f000-\U0001faff\U00002600-\U000027bf\U0001f1e6-\U0001f1ff]+",
     flags=re.UNICODE,
@@ -75,7 +79,30 @@ def sanitise(text: str) -> str:
     text = _NUMBERED.sub("", text)
     text = _MARKDOWN_NOISE.sub("", text)
     text = _EMOJI.sub("", text)
+    # ASCII emoticons are not in the emoji ranges, and the macOS voice reads
+    # ":(" aloud as "colon open-paren". Observed in a real beat reply.
+    text = _EMOTICON.sub("", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+def unwrap_say(value: Any) -> str:
+    """Pull the spoken text out of a `say` field that may be malformed.
+
+    Small models occasionally nest the whole action object inside `say`, e.g.
+        {"say": "{'emotion': 'sad', 'gesture': 'shake'}"}
+    Spoken aloud that is a stream of punctuation and field names, so it is
+    detected and unwrapped -- or dropped, which at least stays silent.
+    """
+    if not isinstance(value, str):
+        return ""
+    stripped = value.strip()
+    if not (stripped.startswith("{") or stripped.startswith("[")):
+        return value
+
+    # Try to recover a nested "say"; accept single quotes, which these
+    # malformed payloads usually use.
+    match = re.search(r"['\"]say['\"]\s*:\s*['\"](.*?)['\"]", stripped, re.DOTALL)
+    return match.group(1) if match else ""
 
 
 def list_models(host: str = HOST) -> list[str]:
@@ -263,7 +290,7 @@ class Conversation:
         try:
             from . import expression
 
-            gesture_menu = expression.gesture_menu()
+            gesture_menu = expression.gesture_menu(gestures)
         except Exception:
             gesture_menu = "\n".join(f"- {g}" for g in gestures)
 
@@ -271,26 +298,25 @@ class Conversation:
             emotions=", ".join(emotions), gestures=gesture_menu
         )
 
+        # Typed explicitly: the JSON-schema dict is richer than the JsonType
+        # alias requests advertises, so passing it inline fails type checking.
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": system}] + self.messages,
+            "stream": False,
+            "format": schema,
+            "options": {
+                # Cooler than plain chat on purpose. Picking the right emotion
+                # is a classification, not a creative act: at 0.7 the same
+                # input scored 12/12 on one run and 10/12 on the next, with
+                # "what is two plus two?" drawing `excited`.
+                "temperature": (ACTION_TEMPERATURE if temperature is None else temperature),
+                "num_predict": self.num_predict,
+            },
+        }
+
         try:
-            r = requests.post(
-                f"{self.host}/api/chat",
-                json={
-                    "model": self.model,
-                    "messages": [{"role": "system", "content": system}] + self.messages,
-                    "stream": False,
-                    "format": schema,  # type: ignore[dict-item]
-                    "options": {
-                        # Cooler than plain chat on purpose. Picking the right
-                        # emotion is a classification, not a creative act: at
-                        # 0.7 the same input scored 12/12 on one run and 10/12
-                        # on the next, with "what is two plus two?" drawing
-                        # `excited`. Lower temperature stabilises the choice.
-                        "temperature": (ACTION_TEMPERATURE if temperature is None else temperature),
-                        "num_predict": self.num_predict,
-                    },
-                },
-                timeout=TIMEOUT,
-            )
+            r = requests.post(f"{self.host}/api/chat", json=payload, timeout=TIMEOUT)
             r.raise_for_status()
             content = r.json().get("message", {}).get("content", "")
             action = json.loads(content)
@@ -298,12 +324,129 @@ class Conversation:
             self.messages.pop()
             raise OllamaError(f"Structured request failed: {e}") from e
 
-        action["say"] = sanitise(action.get("say", ""))
+        action["say"] = sanitise(unwrap_say(action.get("say", "")))
+
+        # Keep the gesture coherent with the emotion. Offering all twelve at
+        # once measurably under-uses them: over 20 varied prompts the model
+        # chose `double_take` 35% of the time and never chose shiver, recoil,
+        # tilt or double_blink at all. Remapping an off-key choice onto the
+        # emotion's own shortlist costs nothing and makes an incoherent pairing
+        # impossible rather than merely discouraged.
+        try:
+            from . import expression
+
+            suited = expression.gestures_for(action.get("emotion", ""))
+            if action.get("gesture") not in suited:
+                action["gesture"] = self._pick_gesture(action, suited)
+        except Exception:
+            pass
+
         if action["say"]:
             self.messages.append({"role": "assistant", "content": action["say"]})
         else:
             self.messages.pop()
         return action
+
+    def respond_with_beats(
+        self,
+        user_text: str,
+        emotions: Sequence[str],
+        max_beats: int = 3,
+        temperature: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get a reply broken into beats, each with its own face and movement.
+
+        A beat is one sentence plus the expression to deliver it with, so the
+        robot can shift mid-reply -- concerned while it restates your problem,
+        then brighter as it offers a suggestion. One emotion per turn cannot do
+        that, and a flat delivery is what makes a long answer feel recited.
+
+        Costs one extra thing to go wrong: a small model asked for a list can
+        return one overlong beat or an empty list, so the result is validated
+        and truncated here rather than trusted.
+
+        Returns [{say, emotion, gesture}, ...] -- never empty on success.
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "beats": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "say": {"type": "string"},
+                            "emotion": {"type": "string", "enum": list(emotions)},
+                        },
+                        "required": ["say", "emotion"],
+                    },
+                }
+            },
+            "required": ["beats"],
+        }
+
+        self.messages.append({"role": "user", "content": user_text})
+        system = self.system + BEATS_SUFFIX.format(
+            emotions=", ".join(emotions), max_beats=max_beats
+        )
+
+        # Typed explicitly: the schema dict is richer than the JsonType alias
+        # requests advertises, so passing it inline fails type checking.
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": system}] + self.messages,
+            "stream": False,
+            "format": schema,
+            "options": {
+                "temperature": (ACTION_TEMPERATURE if temperature is None else temperature),
+                "num_predict": self.num_predict * 2,  # room for several sentences
+            },
+        }
+
+        try:
+            r = requests.post(f"{self.host}/api/chat", json=payload, timeout=TIMEOUT)
+            r.raise_for_status()
+            parsed = json.loads(r.json().get("message", {}).get("content", ""))
+        except (requests.RequestException, ValueError) as e:
+            self.messages.pop()
+            raise OllamaError(f"Beat request failed: {e}") from e
+
+        from . import expression
+
+        beats: list[dict[str, Any]] = []
+        for raw in (parsed.get("beats") or [])[:max_beats]:
+            said = sanitise(unwrap_say(raw.get("say", "")))
+            if not said:
+                continue
+            emotion = raw.get("emotion", "neutral")
+            suited = expression.gestures_for(emotion)
+            beats.append(
+                {
+                    "say": said,
+                    "emotion": emotion,
+                    "gesture": suited[len(said) % len(suited)] if suited else "blink",
+                }
+            )
+
+        if beats:
+            self.messages.append(
+                {"role": "assistant", "content": " ".join(b["say"] for b in beats)}
+            )
+        else:
+            self.messages.pop()
+        return beats
+
+    def _pick_gesture(self, action: dict[str, Any], suited: Sequence[str]) -> str:
+        """Choose from an emotion's shortlist when the model's pick doesn't fit.
+
+        Deterministic rather than random: the same reply should produce the
+        same movement, or debugging a demo becomes guesswork. Rotating on the
+        length of the reply spreads usage across the shortlist instead of
+        always landing on its first entry.
+        """
+        if not suited:
+            return action.get("gesture", "blink")
+        return suited[len(action.get("say", "")) % len(suited)]
 
 
 # Appended to the persona prompt in action mode. Kept separate so personas
@@ -319,6 +462,17 @@ You also control your own face and body. With every reply choose:
 Match them to what the person actually said. Bad news gets sympathy and a slow
 nod, not cheerfulness. Never shake your head at good news -- that reads as "no".
 Prefer subtle choices; constant big gestures look twitchy rather than expressive."""
+
+# Multi-beat delivery. Kept separate from ACTION_SUFFIX because asking for both
+# a list and a gesture in one schema made a small model drop fields.
+BEATS_SUFFIX = """
+
+Break your reply into up to {max_beats} short beats. Each beat is ONE sentence
+plus the emotion to say it with, chosen from: {emotions}
+
+Let the emotion change across beats where the meaning changes -- concerned while
+you acknowledge a problem, then warmer as you offer help. If the reply is a
+single thought, one beat is correct; do not pad it."""
 
 
 def chat_once(prompt: str, model: str = DEFAULT_MODEL) -> str:

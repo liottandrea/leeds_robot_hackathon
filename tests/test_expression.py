@@ -132,3 +132,53 @@ class TestLookTargets:
     def test_directions_are_in_range(self, name: str) -> None:
         x, y = ex.LOOK_DIRECTIONS[name]
         assert 0 <= x <= 10 and 0 <= y <= 10
+
+
+class TestEmotionGestureAffinity:
+    """The affinity map narrows the LLM's gesture choice to what suits the
+    emotion. Measured effect: gestures never chosen fell from 4 to 3, the most
+    common gesture fell from 35% to 20% of picks, and incoherent pairings
+    became impossible rather than merely discouraged."""
+
+    @pytest.mark.parametrize("emotion", sorted(ex.POSES))
+    def test_every_emotion_has_suitable_gestures(self, emotion: str) -> None:
+        suited = ex.gestures_for(emotion)
+        assert suited, f"emotion {emotion!r} has no gestures to choose from"
+        for gesture in suited:
+            assert gesture in ex.GESTURES, f"{emotion!r} lists unknown gesture {gesture!r}"
+
+    def test_every_gesture_is_reachable(self) -> None:
+        """A gesture in no shortlist can never be chosen, so it is dead code
+        that still costs a slot in the prompt."""
+        reachable = {g for gs in ex.EMOTION_GESTURES.values() for g in gs}
+        unreachable = set(ex.GESTURE_NAMES) - reachable
+        assert not unreachable, (
+            f"gestures no emotion can reach: {sorted(unreachable)}. "
+            "Add each to at least one entry in EMOTION_GESTURES."
+        )
+
+    def test_sad_emotions_exclude_bouncy_gestures(self) -> None:
+        """Structural version of the tone check: a cheerful movement under bad
+        news undercuts the words more than a mismatched face does."""
+        for emotion in ("sad", "sympathetic"):
+            assert "perk_up" not in ex.gestures_for(emotion)
+            assert "double_take" not in ex.gestures_for(emotion)
+
+    def test_happy_emotions_exclude_head_shake(self) -> None:
+        """A head shake means "no". REGRESSION: it was chosen for
+        "I finally finished my project!"."""
+        for emotion in ("happy", "excited"):
+            assert "shake" not in ex.gestures_for(emotion)
+
+    def test_fear_reaches_the_fear_gestures(self) -> None:
+        assert "shiver" in ex.gestures_for("scared")
+
+    def test_unknown_emotion_falls_back_to_everything(self) -> None:
+        assert ex.gestures_for("not_an_emotion") == ex.GESTURE_NAMES
+
+    def test_sympathetic_excludes_head_shake(self) -> None:
+        """REGRESSION: observed on hardware -- "But don't worry, I'll help you
+        prepare" was delivered with a head shake, i.e. encouragement plus "no".
+        Sympathetic replies often turn towards encouragement, so the gesture
+        must not contradict that."""
+        assert "shake" not in ex.gestures_for("sympathetic")

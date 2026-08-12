@@ -139,14 +139,37 @@ class FakeSoundDevice(types.ModuleType):
                 "name": "Plantronics Blackwire 3220",
                 "max_input_channels": 2,
                 "max_output_channels": 0,
+                "default_samplerate": 48000.0,
             },
             {
                 "name": "Plantronics Blackwire 3220",
                 "max_input_channels": 0,
                 "max_output_channels": 2,
+                "default_samplerate": 48000.0,
             },
-            {"name": "MacBook Pro Microphone", "max_input_channels": 1, "max_output_channels": 0},
-            {"name": "MacBook Pro Speakers", "max_input_channels": 0, "max_output_channels": 2},
+            {
+                "name": "MacBook Pro Microphone",
+                "max_input_channels": 1,
+                "max_output_channels": 0,
+                "default_samplerate": 44100.0,
+            },
+            {
+                "name": "MacBook Pro Speakers",
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+                "default_samplerate": 48000.0,
+            },
+            # An Aggregate Device, as used to put the robot on a video call:
+            # "BlackHole 2ch + built-in mic" carries the call on one pair of
+            # channels and the room on another, at 48 kHz rather than the
+            # 16 kHz Whisper wants. Both of those trip up code written for a
+            # plain microphone, so the fixture provides one to test against.
+            {
+                "name": "Ohbot Ears (Aggregate)",
+                "max_input_channels": 3,
+                "max_output_channels": 0,
+                "default_samplerate": 48000.0,
+            },
         ]
 
         class _Default:
@@ -169,9 +192,34 @@ class FakeSoundDevice(types.ModuleType):
         raise NotImplementedError("microphone capture is not exercised in unit tests")
 
 
+class FakeFasterWhisper(types.ModuleType):
+    """Stand-in for faster_whisper, which CI does not install.
+
+    ohbot_kit.voice imports WhisperModel at module level, and ohbot_kit.call
+    subclasses its Listener, so importing the call module would otherwise pull
+    in ctranslate2 and a 150 MB model download. Constructing the fake model is
+    free, so tests can build a CallListener and exercise its real logic.
+    """
+
+    def __init__(self, name: str = "faster_whisper") -> None:
+        super().__init__(name)
+
+        class WhisperModel:
+            def __init__(self, size: str, device: str = "cpu", compute_type: str = "int8"):
+                self.size = size
+                self.transcribed: list[Any] = []
+
+            def transcribe(self, audio: Any, **kwargs: Any) -> Any:
+                self.transcribed.append(audio)
+                return [], None
+
+        self.WhisperModel = WhisperModel
+
+
 # Install the fakes before ohbot_kit is imported anywhere.
 _fake_ohbot = FakeOhbot()
 _fake_sd = FakeSoundDevice()
+_fake_whisper = FakeFasterWhisper()
 
 # The real package is `ohbot.ohbot`, imported as `from ohbot import ohbot`.
 _ohbot_pkg = types.ModuleType("ohbot")
@@ -179,6 +227,7 @@ _ohbot_pkg.ohbot = _fake_ohbot  # type: ignore[attr-defined]
 sys.modules.setdefault("ohbot", _ohbot_pkg)
 sys.modules.setdefault("ohbot.ohbot", _fake_ohbot)
 sys.modules.setdefault("sounddevice", _fake_sd)
+sys.modules.setdefault("faster_whisper", _fake_whisper)
 
 
 # --------------------------------------------------------------------------

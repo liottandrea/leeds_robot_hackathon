@@ -42,6 +42,7 @@ Type *"I had a really rough day, my cat died last night."* Watch the face, not t
 
 ```bash
 python examples/08_empathy_chat.py --voice   # talk to it out loud
+python examples/11_multi_beat.py             # expression changes mid-reply
 python examples/02_expressions.py            # every pose and gesture, demonstrated
 ```
 
@@ -75,6 +76,7 @@ Numbered in the order worth reading them.
 | `07_sensors.py` | react to someone approaching |
 | **`08_empathy_chat.py`** | **the flagship** — reacts with face and body, not just words |
 | `09_vision.py` | webcam + a vision model: it describes what it sees |
+| `11_multi_beat.py` | expression that changes *within* a single reply |
 | `10_teams_call.py` | it sits in a Teams call and answers when named — [docs/TEAMS.md](docs/TEAMS.md) |
 
 ## What it can do
@@ -105,7 +107,7 @@ between runs — a single run is a sample, not a measurement.
 ## Layout
 
 ```text
-ohbot_kit/     the library          examples/   01-09
+ohbot_kit/     the library          examples/   01-10
 tools/         diagnostics          docs/       guides
 template.py    copy this to start   ohbot_chat.py  the full chat app
 config.yaml    settings + personas

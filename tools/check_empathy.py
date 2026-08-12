@@ -109,6 +109,15 @@ def semantic_check(model, host, verbose=True, repeats=1):
     print(f"  median latency   : {sorted(times)[n // 2]:.2f}s")
     print(f"  schema violations: {len(invalid)}")
     print(f"  gesture tone misses: {len(tone_misses)}")
+
+    # A gesture the model never picks is dead weight in the vocabulary. Before
+    # the emotion->gesture affinity map, `double_take` took 35% of all choices
+    # while four gestures never fired at all, even on prompts that suited them.
+    used = {g for runs in per_case.values() for _, _, g in runs}
+    unused = [g for g in expression.GESTURE_NAMES if g not in used]
+    print(f"  gestures used      : {len(used)}/{len(expression.GESTURE_NAMES)}")
+    if unused:
+        print(f"      never chosen: {', '.join(unused)}")
     if repeats > 1:
         print(f"  unstable across runs: {len(unstable)}/{len(CASES)} cases")
         for prompt, runs in unstable.items():

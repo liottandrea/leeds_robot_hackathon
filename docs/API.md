@@ -105,9 +105,17 @@ action = convo.respond_with_action(text, expression.EMOTIONS, expression.GESTURE
 # -> {"say": ..., "emotion": ..., "gesture": ..., "gaze_x": 5, "gaze_y": 5}
 bot.speak(action["say"], emotion=action["emotion"], gesture=action["gesture"])
 
+# Reply broken into beats, each with its own face -- expression changes mid-reply
+for beat in convo.respond_with_beats(text, expression.EMOTIONS, max_beats=3):
+    bot.speak(beat["say"], emotion=beat["emotion"], gesture=beat["gesture"])
+
 convo.reset()  # forget the conversation
 convo.warm_up()  # load the model now, so the first reply isn't slow
 ```
+
+`respond_with_action` gives one face per reply; `respond_with_beats` gives one per
+sentence, so the robot can be concerned while it restates your problem and brighter as it
+offers help. Beats cost one `say()` call each, so keep `max_beats` low for live demos.
 
 `respond_with_action` uses Ollama's JSON-schema mode, **not** the tools API — phi4-mini
 advertises tool support but never emits tool calls. See [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -132,6 +140,12 @@ POSES["smug"] = {LIDBLINK: 6, HEADNOD: 6, HEADROLL: 7}
 GESTURES["shrug"] = [(HEADROLL, 7, 6, 0.3), (HEADROLL, 3, 6, 0.3), (HEADROLL, 5, 4, 0.2)]
 GESTURE_MEANINGS["shrug"] = "indifference, who knows"
 ```
+
+Also add it to `EMOTION_GESTURES`, which lists the gestures that suit each emotion — a
+gesture in no shortlist can never be chosen. Offering all twelve at once measurably
+under-used them: `double_take` took 35% of picks while four gestures never fired at all,
+even on prompts that suited them. Narrowing the choice cut that to 20% and made
+incoherent pairings impossible rather than merely discouraged.
 
 Both become choices the LLM can pick immediately — the JSON schema is built from those
 tables. **Give every gesture a meaning:** without one the model picks on the name alone,
