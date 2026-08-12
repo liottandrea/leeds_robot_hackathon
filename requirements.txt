@@ -1,0 +1,11 @@
+certifi==2026.7.22
+charset-normalizer==3.4.9
+comtypes==1.4.16
+idna==3.18
+lxml==6.1.1
+numpy==2.4.6
+ohbot==4.0.18
+playsound3==3.3.2
+pyserial==3.5
+requests==2.34.2
+urllib3==2.7.0
