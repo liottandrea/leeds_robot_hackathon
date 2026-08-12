@@ -81,7 +81,17 @@ POSES = {
 
     "confused": {LIDBLINK: 8, HEADNOD: 5, EYETILT: 5, HEADROLL: 3,
                  EYETURN: 6},
+
+    # Pulled back and slightly away, eyes wide. Pair with the "shiver" gesture.
+    "scared": {LIDBLINK: 10, HEADNOD: 3, EYETILT: 6, HEADROLL: 6,
+               BOTTOMLIP: 7, TOPLIP: 6},
 }
+
+# Axes that aim the face at the person. A pose may leave these off-centre for
+# character -- `curious` tilts the head to 8 -- but they must be returned to
+# centre afterwards or the offset persists into the next utterance and
+# compounds until the robot is addressing the wall. robot.recentre() does that.
+ORIENTATION = (HEADTURN, HEADROLL, EYETURN)
 
 # -- gestures -------------------------------------------------------------
 # Keyframes: (motor, position, speed, hold_seconds). Speed is 0-10, where 10
@@ -137,7 +147,35 @@ GESTURES = {
         (LIDBLINK, 10, 10, 0.10),
         (HEADNOD, 7, 8, 0.25),
         (HEADROLL, 6, 6, 0.25),
-        (HEADNOD, 5, 5, 0.20),
+        (HEADNOD, 5, 5, 0.15),
+        (HEADROLL, 5, 6, 0.15),   # return the roll, or it leaks into the next line
+    ],
+
+    # Fast, small, irregular -- a tremble, not a shake. Amplitude stays within
+    # one unit of centre: big movements read as "shaking the head no", small
+    # rapid ones read as fear. Eyes dart as well as the head, which is what
+    # sells it; a head-only tremble looks like a loose servo.
+    "shiver": [
+        (LIDBLINK, 10, 10, 0.05),
+        (HEADROLL, 4, 10, 0.06), (EYETURN, 6, 10, 0.05),
+        (HEADROLL, 6, 10, 0.06), (EYETURN, 4, 10, 0.05),
+        (HEADROLL, 4, 10, 0.06), (HEADTURN, 6, 10, 0.05),
+        (HEADROLL, 6, 10, 0.06), (HEADTURN, 4, 10, 0.05),
+        (HEADROLL, 4, 10, 0.06), (EYETURN, 6, 10, 0.05),
+        (HEADROLL, 6, 10, 0.06), (EYETURN, 4, 10, 0.05),
+        (HEADROLL, 5, 8, 0.08), (HEADTURN, 5, 8, 0.06),
+        (EYETURN, 5, 8, 0.10),
+    ],
+
+    # A flinch: snap back and away, hold, then edge cautiously forward again.
+    "recoil": [
+        (LIDBLINK, 10, 10, 0.04),
+        (HEADNOD, 2, 10, 0.10),
+        (HEADTURN, 7, 10, 0.30),
+        (HEADROLL, 6, 8, 0.35),
+        (HEADTURN, 5, 2, 0.40),
+        (HEADNOD, 5, 2, 0.25),
+        (HEADROLL, 5, 3, 0.20),
     ],
 
     "look_away": [
@@ -176,6 +214,8 @@ GESTURE_MEANINGS = {
     "look_away": "embarrassment, discomfort, thinking to oneself",
     "blink": "a small neutral beat",
     "double_blink": "mild confusion or processing",
+    "shiver": "fear, dread, being creeped out",
+    "recoil": "alarm or disgust at something unpleasant",
 }
 
 # Emotions the LLM is allowed to pick. Kept in one place so the JSON schema and
@@ -195,3 +235,48 @@ def gesture_menu():
 def gaze_positions(x=5, y=5):
     """Eye targets for a gaze direction. x: 0 right .. 10 left, y: 0 down .. 10 up."""
     return {EYETURN: x, EYETILT: y}
+
+
+# Named targets as (x, y), where x is 0 right .. 10 left and y is 0 down .. 10 up.
+# "user" is straight ahead -- the position to return to so it addresses the person.
+LOOK_DIRECTIONS = {
+    "user": (5, 5),
+    "ahead": (5, 5),
+    "left": (9, 5),
+    "right": (1, 5),
+    "up": (5, 9),
+    "down": (5, 1),
+    "up_left": (8, 8),
+    "up_right": (2, 8),
+    "down_left": (8, 2),
+    "down_right": (2, 2),
+}
+
+# How far the head follows the eyes. People saccade first and the head catches
+# up partway; driving the head the full distance makes the robot look like it
+# is tracking a fly rather than glancing at something.
+HEAD_FOLLOW = 0.55
+
+
+def look_targets(x=5, y=5, with_head=True, head_follow=HEAD_FOLLOW):
+    """Motor targets for looking somewhere with eyes, head yaw, pitch and roll.
+
+    Returns (eye_targets, head_targets) so the caller can move the eyes first
+    and the head a moment later, which is what makes the movement read as a
+    glance rather than a mechanical pan.
+    """
+    eyes = {EYETURN: x, EYETILT: y}
+    if not with_head:
+        return eyes, {}
+
+    def follow(value):
+        return 5 + (value - 5) * head_follow
+
+    head = {
+        HEADTURN: follow(x),
+        HEADNOD: follow(y),
+        # A slight roll toward the direction of travel. Real heads tip a little
+        # when turning to look, and without it the turn feels stiff.
+        HEADROLL: 5 + (x - 5) * 0.2,
+    }
+    return eyes, head

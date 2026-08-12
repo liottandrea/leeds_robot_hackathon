@@ -101,10 +101,15 @@ class Ohbot:
 
     # -- speech ------------------------------------------------------------
 
-    def speak(self, text, emotion=None, gesture=None):
+    def speak(self, text, emotion=None, gesture=None, recentre=True):
         """Say text aloud, optionally with a face and a movement under it.
 
         The gesture is launched first and plays *during* the speech.
+
+        recentre returns the head and eyes to face the person afterwards.
+        Without it, poses that tilt the head for character (`curious` rolls to
+        8) leave that tilt in place, and it compounds utterance after utterance
+        until the robot is addressing the wall instead of you.
         """
         if not text or not text.strip():
             return
@@ -120,6 +125,21 @@ class Ohbot:
             ohbot.say(text)  # blocks until the audio has finished
         finally:
             self.speaking.clear()
+            if recentre:
+                # Let the gesture finish first, or we fight it mid-keyframe.
+                if self._gesture_thread is not None:
+                    self._gesture_thread.join(timeout=2)
+                self.recentre()
+
+    def recentre(self, speed=2):
+        """Return head and eyes to centre so the robot faces the person again.
+
+        Deliberately slow: a snap back to centre reads as a twitch, while an
+        unhurried settle reads as relaxing. The emotional face (lids, pitch)
+        is left alone -- only the aiming axes are reset.
+        """
+        for motor in ex.ORIENTATION:
+            self._move(motor, 5, speed)
 
     # -- expression --------------------------------------------------------
 
@@ -137,9 +157,43 @@ class Ohbot:
             self._move(motor, pos, 4)
 
     def gaze(self, x=5, y=5, speed=6):
-        """Aim the eyes. x: 0 right .. 10 left. y: 0 down .. 10 up."""
+        """Aim the eyes only. x: 0 right .. 10 left. y: 0 down .. 10 up."""
         for motor, pos in ex.gaze_positions(x, y).items():
             self._move(motor, pos, speed)
+
+    def look_at(self, direction=None, x=5, y=5, with_head=True, blocking=False):
+        """Look somewhere with eyes, head turn, head pitch and a little roll.
+
+            bot.look_at("up_left")      # a named direction
+            bot.look_at(x=8, y=3)       # or coordinates
+            bot.look_at("user")         # back to facing the person
+
+        The eyes move first and the head follows a moment later, covering only
+        part of the distance. That lag is what makes it read as a glance; moving
+        both together at the same distance looks like a security camera.
+        """
+        if direction is not None:
+            if direction not in ex.LOOK_DIRECTIONS:
+                raise KeyError(
+                    "Unknown direction {!r}. Available: {}".format(
+                        direction, ", ".join(sorted(ex.LOOK_DIRECTIONS))
+                    )
+                )
+            x, y = ex.LOOK_DIRECTIONS[direction]
+
+        eyes, head = ex.look_targets(x, y, with_head=with_head)
+
+        def run():
+            for motor, pos in eyes.items():
+                self._move(motor, pos, 8)      # eyes snap
+            time.sleep(0.12)                   # the lag that sells it
+            for motor, pos in head.items():
+                self._move(motor, pos, 3)      # head follows, slower
+
+        if blocking:
+            run()
+        else:
+            threading.Thread(target=run, daemon=True).start()
 
     def gesture(self, name, blocking=False):
         """Play a keyframe sequence from expression.GESTURES.
