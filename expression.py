@@ -160,10 +160,36 @@ GESTURES = {
     ],
 }
 
+# What each gesture MEANS. The LLM picks from names alone otherwise, and names
+# are ambiguous: given just "shake" it will happily pick it for good news, where
+# a head shake reads as "no". Measured effect -- without these descriptions,
+# "I finally finished my project!" chose `shake`, and "why is the sky blue?"
+# chose `double_take`. Keep a description for every gesture you add.
+GESTURE_MEANINGS = {
+    "nod": "agreement, understanding, yes",
+    "slow_nod": "sympathy, taking something in seriously",
+    "shake": "disagreement, no, disbelief at something bad",
+    "tilt": "curiosity, mild puzzlement",
+    "double_take": "shock at something startling",
+    "lean_in": "close interest, wanting to hear more",
+    "perk_up": "delight at good news",
+    "look_away": "embarrassment, discomfort, thinking to oneself",
+    "blink": "a small neutral beat",
+    "double_blink": "mild confusion or processing",
+}
+
 # Emotions the LLM is allowed to pick. Kept in one place so the JSON schema and
 # the pose table can never drift apart.
 EMOTIONS = sorted(POSES)
 GESTURE_NAMES = sorted(GESTURES)
+
+
+def gesture_menu():
+    """"name (meaning)" lines for the prompt, so choices are made on meaning."""
+    return "\n".join(
+        "- {}: {}".format(name, GESTURE_MEANINGS.get(name, "no description"))
+        for name in GESTURE_NAMES
+    )
 
 
 def gaze_positions(x=5, y=5):

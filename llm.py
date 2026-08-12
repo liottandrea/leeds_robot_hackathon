@@ -249,8 +249,16 @@ class Conversation:
         }
 
         self.messages.append({"role": "user", "content": user_text})
+        # Gestures are described, not just named -- see expression.GESTURE_MEANINGS.
+        try:
+            import expression
+
+            gesture_menu = expression.gesture_menu()
+        except Exception:
+            gesture_menu = "\n".join("- {}".format(g) for g in gestures)
+
         system = self.system + ACTION_SUFFIX.format(
-            emotions=", ".join(emotions), gestures=", ".join(gestures)
+            emotions=", ".join(emotions), gestures=gesture_menu
         )
 
         try:
@@ -289,12 +297,13 @@ ACTION_SUFFIX = """
 
 You also control your own face and body. With every reply choose:
 - emotion: one of {emotions}
-- gesture: one of {gestures}
 - gaze_x (0 = your right, 5 = ahead, 10 = your left) and gaze_y (0 = down, 10 = up)
+- gesture, chosen by MEANING from this list:
+{gestures}
 
-Match them to the meaning. If someone shares bad news, be sympathetic and nod
-slowly rather than cheerful. If something is surprising, look surprised. Prefer
-subtle choices; constant big gestures read as twitchy, not expressive."""
+Match them to what the person actually said. Bad news gets sympathy and a slow
+nod, not cheerfulness. Never shake your head at good news -- that reads as "no".
+Prefer subtle choices; constant big gestures look twitchy rather than expressive."""
 
 
 def chat_once(prompt, model=DEFAULT_MODEL):
