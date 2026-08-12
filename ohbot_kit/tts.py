@@ -21,20 +21,19 @@ Two constraints come from that same envelope code, and both are handled below:
     replies like "Hi." are realistic, so every clip gets a silent tail.
 """
 
+from __future__ import annotations
+
 import os
 import wave
 
 import numpy as np
-
 from ohbot import ohbot
 
 MODEL_DIR = "models"
 MODEL_FILE = os.path.join(MODEL_DIR, "kokoro-v1.0.onnx")
 VOICES_FILE = os.path.join(MODEL_DIR, "voices-v1.0.bin")
 
-DOWNLOAD_BASE = (
-    "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
-)
+DOWNLOAD_BASE = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0"
 
 DEFAULT_VOICE = "af_heart"
 DEFAULT_SPEED = 1.0
@@ -48,22 +47,22 @@ class KokoroUnavailable(RuntimeError):
     """Raised when the Kokoro model files are missing."""
 
 
-def available():
+def available() -> bool:
     """True if both model files are present."""
     return os.path.exists(MODEL_FILE) and os.path.exists(VOICES_FILE)
 
 
-def missing_files():
+def missing_files() -> list[str]:
     return [p for p in (MODEL_FILE, VOICES_FILE) if not os.path.exists(p)]
 
 
 class KokoroTTS:
     """Generates Ohbot's speech WAV with Kokoro instead of macOS `say`."""
 
-    def __init__(self, voice=DEFAULT_VOICE, speed=DEFAULT_SPEED):
+    def __init__(self, voice: str = DEFAULT_VOICE, speed: float = DEFAULT_SPEED) -> None:
         if not available():
             raise KokoroUnavailable(
-                "Missing Kokoro model files: {}\nRun: python setup_demo.py".format(
+                "Missing Kokoro model files: {}\nRun: python tools/check_setup.py".format(
                     ", ".join(missing_files())
                 )
             )
@@ -75,19 +74,17 @@ class KokoroTTS:
         self.speed = speed
         self._kokoro = Kokoro(MODEL_FILE, VOICES_FILE)
 
-    def voices(self):
+    def voices(self) -> list[str]:
         """Names of every voice in the voices file."""
         return sorted(self._kokoro.get_voices())
 
-    def synth(self, text):
+    def synth(self, text: str) -> None:
         """Render text to ohbotData/ohbotspeech.wav as 16-bit mono PCM.
 
         Signature matches ohbot._generateSpeechFile(text) so it can stand in
         for it directly.
         """
-        samples, rate = self._kokoro.create(
-            text, voice=self.voice, speed=self.speed, lang=LANG
-        )
+        samples, rate = self._kokoro.create(text, voice=self.voice, speed=self.speed, lang=LANG)
 
         audio = np.asarray(samples, dtype=np.float32)
         if audio.ndim > 1:  # defensive: collapse to mono
@@ -111,7 +108,7 @@ class KokoroTTS:
             w.writeframes(pcm.tobytes())
 
 
-def install(engine):
+def install(engine: KokoroTTS) -> KokoroTTS:
     """Route ohbot.say() through the given engine.
 
     say() looks _generateSpeechFile up as a module global at call time, so
@@ -121,7 +118,7 @@ def install(engine):
     return engine
 
 
-def uninstall():
+def uninstall() -> None:
     """Restore the built-in macOS `say` synthesis."""
     ohbot._generateSpeechFile = _ORIGINAL_GENERATE
 
@@ -139,11 +136,5 @@ if __name__ == "__main__":
 
     with wave.open(ohbot.speechAudioFile) as w:
         print(
-            "wrote {}: {} Hz, {} ch, {}-bit, {:.2f}s".format(
-                ohbot.speechAudioFile,
-                w.getframerate(),
-                w.getnchannels(),
-                w.getsampwidth() * 8,
-                w.getnframes() / w.getframerate(),
-            )
+            f"wrote {ohbot.speechAudioFile}: {w.getframerate()} Hz, {w.getnchannels()} ch, {w.getsampwidth() * 8}-bit, {w.getnframes() / w.getframerate():.2f}s"
         )

@@ -20,7 +20,6 @@ cfg, _convo, robot_kwargs = setup()
 
 # `with` guarantees close() runs, even if something below raises.
 with Ohbot(**robot_kwargs) as bot:
-
     # Motors take a position 0-10 and an optional speed 0-10.
     bot.express("happy")
     bot.speak("Hello! I am Ohbot.")

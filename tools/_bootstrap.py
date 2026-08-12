@@ -21,8 +21,6 @@ if ROOT not in sys.path:
 # silently creates a second, uncalibrated copy -- so fail loudly instead.
 if not os.path.exists(os.path.join(os.getcwd(), "config.yaml")):
     sys.stderr.write(
-        "Run this from the repository root:\n"
-        "    cd {}\n"
-        "    python examples/{}\n".format(ROOT, os.path.basename(sys.argv[0]))
+        f"Run this from the repository root:\n    cd {ROOT}\n    python examples/{os.path.basename(sys.argv[0])}\n"
     )
     sys.exit(1)

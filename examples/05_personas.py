@@ -14,7 +14,8 @@ import sys
 
 import _bootstrap  # noqa: F401
 
-from ohbot_kit import Ohbot, config as config_mod, setup
+from ohbot_kit import Ohbot, setup
+from ohbot_kit import config as config_mod
 
 QUESTION = "Who are you, and what do you like doing?"
 
@@ -22,7 +23,7 @@ cfg = config_mod.load(warn=False)
 wanted = sys.argv[1:] or sorted(cfg.section("personas"))
 
 for name in wanted:
-    print("\n=== {} ===".format(name))
+    print(f"\n=== {name} ===")
     # setup() re-reads config and installs that persona's voice.
     _cfg, convo, robot_kwargs = setup(persona=name)
 

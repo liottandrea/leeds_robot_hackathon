@@ -89,7 +89,8 @@ For anything not wrapped here, the raw library is still available:
 
 ```python
 from ohbot import ohbot
-ohbot.move(ohbot.HEADROLL, 8, 3)     # motor, position 0-10, speed 0-10
+
+ohbot.move(ohbot.HEADROLL, 8, 3)  # motor, position 0-10, speed 0-10
 ```
 
 ## LLM
@@ -104,8 +105,8 @@ action = convo.respond_with_action(text, expression.EMOTIONS, expression.GESTURE
 # -> {"say": ..., "emotion": ..., "gesture": ..., "gaze_x": 5, "gaze_y": 5}
 bot.speak(action["say"], emotion=action["emotion"], gesture=action["gesture"])
 
-convo.reset()      # forget the conversation
-convo.warm_up()    # load the model now, so the first reply isn't slow
+convo.reset()  # forget the conversation
+convo.warm_up()  # load the model now, so the first reply isn't slow
 ```
 
 `respond_with_action` uses Ollama's JSON-schema mode, **not** the tools API — phi4-mini
@@ -115,9 +116,10 @@ advertises tool support but never emits tool calls. See [ARCHITECTURE.md](ARCHIT
 
 ```python
 from ohbot_kit import make_listener
+
 listener = make_listener(cfg)
 
-audio_in = listener.record_utterance(bot)   # pass bot so it ignores the robot's own voice
+audio_in = listener.record_utterance(bot)  # pass bot so it ignores the robot's own voice
 text = listener.transcribe(audio_in)
 ```
 

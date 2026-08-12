@@ -34,17 +34,17 @@ with Ohbot(**robot_kwargs) as bot:
         try:
             tts.install(tts.KokoroTTS(voice=name))
         except Exception as e:
-            print("skipping {}: {}".format(name, e))
+            print(f"skipping {name}: {e}")
             continue
         print("voice:", name)
-        bot.speak("Hello, my name is Ohbot and this is the {} voice.".format(name))
+        bot.speak(f"Hello, my name is Ohbot and this is the {name} voice.")
 
     # Speed is a Kokoro parameter, not a playback trick -- the speech is
     # generated at that pace, so it still sounds natural.
     for speed in (0.8, 1.3):
         tts.install(tts.KokoroTTS(voice=VOICES[0], speed=speed))
         print("speed:", speed)
-        bot.speak("This is me talking at speed {}.".format(speed))
+        bot.speak(f"This is me talking at speed {speed}.")
 
     # WHY THE LIP MOVES: ohbot.say() does NOT use phonemes on macOS. It reads
     # the generated WAV, sums the sample bytes in chunks of framerate/10, and

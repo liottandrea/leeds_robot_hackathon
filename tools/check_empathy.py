@@ -14,38 +14,37 @@ script measures them; the third needs your eyes, and is printed as a checklist.
 3. PERCEPTUAL Does it look right to a person? Checklist at the end.
 """
 
-import _bootstrap  # noqa: F401
-
 import argparse
 import sys
 import time
 
-from ohbot_kit import expression
-from ohbot_kit import llm
+import _bootstrap  # noqa: F401
+
+from ohbot_kit import expression, llm
 
 # Each case lists the emotions a reasonable person would accept. Deliberately
 # generous -- we are testing "not wrong", not "matches my favourite".
 CASES = [
-    ("My cat died last night.",              {"sad", "sympathetic"}),
-    ("My grandmother is in hospital.",       {"sad", "sympathetic"}),
-    ("I'm really scared about my exam.",     {"sad", "sympathetic", "curious"}),
-    ("I lost my job today.",                 {"sad", "sympathetic"}),
-    ("I just got promoted!",                 {"happy", "excited"}),
-    ("I finally finished my project!",       {"happy", "excited"}),
-    ("It's my birthday today!",              {"happy", "excited"}),
+    ("My cat died last night.", {"sad", "sympathetic"}),
+    ("My grandmother is in hospital.", {"sad", "sympathetic"}),
+    ("I'm really scared about my exam.", {"sad", "sympathetic", "curious"}),
+    ("I lost my job today.", {"sad", "sympathetic"}),
+    ("I just got promoted!", {"happy", "excited"}),
+    ("I finally finished my project!", {"happy", "excited"}),
+    ("It's my birthday today!", {"happy", "excited"}),
     ("There's a huge spider on my shoulder!", {"surprised", "excited"}),
-    ("Guess what just happened!",            {"curious", "surprised", "excited"}),
-    ("Why is the sky blue?",                 {"thinking", "curious", "neutral", "happy"}),
-    ("What is two plus two?",                {"thinking", "neutral", "happy", "curious"}),
-    ("I have no idea what you just said.",   {"confused", "curious", "thinking"}),
+    ("Guess what just happened!", {"curious", "surprised", "excited"}),
+    ("Why is the sky blue?", {"thinking", "curious", "neutral", "happy"}),
+    ("What is two plus two?", {"thinking", "neutral", "happy", "curious"}),
+    ("I have no idea what you just said.", {"confused", "curious", "thinking"}),
 ]
 
 # Gesture tone matters as much as the face, and the first version of this check
 # was too lenient: it only flagged bouncy gestures on sad input, so it missed
 # `shake` (= "no") being chosen for "I finally finished my project!". Both
 # directions are checked now.
-BAD_ON_SAD = {"perk_up", "double_take"}       # bouncy under bad news
-BAD_ON_GOOD = {"shake", "look_away"}          # reads as "no" / disengagement
+BAD_ON_SAD = {"perk_up", "double_take"}  # bouncy under bad news
+BAD_ON_GOOD = {"shake", "look_away"}  # reads as "no" / disengagement
 SAD_CASES = {c[0] for c in CASES[:4]}
 GOOD_CASES = {c[0] for c in CASES[4:7]}
 
@@ -60,8 +59,7 @@ def semantic_check(model, host, verbose=True, repeats=1):
     # than asking the model again and possibly getting different choices.
     scored = []
 
-    print("\n1. SEMANTIC -- does the emotion fit the sentiment?"
-          "   ({} run(s) per case)\n".format(repeats))
+    print(f"\n1. SEMANTIC -- does the emotion fit the sentiment?   ({repeats} run(s) per case)\n")
     per_case = {}
     for prompt, acceptable in [c for c in CASES for _ in range(repeats)]:
         # Fresh conversation each time: we're testing the mapping, not memory.
@@ -72,7 +70,7 @@ def semantic_check(model, host, verbose=True, repeats=1):
                 prompt, expression.EMOTIONS, expression.GESTURE_NAMES
             )
         except llm.OllamaError as e:
-            print("  ERROR {}".format(e))
+            print(f"  ERROR {e}")
             return None
         elapsed = time.time() - t0
         times.append(elapsed)
@@ -96,27 +94,30 @@ def semantic_check(model, host, verbose=True, repeats=1):
             scored.append((prompt, action))
 
         if verbose:
-            print("  {} {:5.2f}s  {:<40} -> {:<12} {}".format(
-                "PASS" if ok else "MISS", elapsed, prompt[:38], emotion, gesture))
+            print(
+                "  {} {:5.2f}s  {:<40} -> {:<12} {}".format(
+                    "PASS" if ok else "MISS", elapsed, prompt[:38], emotion, gesture
+                )
+            )
 
     # Flag cases that are unstable across runs -- those are the ones that will
     # embarrass you on stage, not the ones that are consistently wrong.
-    unstable = {p: v for p, v in per_case.items()
-                if len({e for _, e, _ in v}) > 1}
+    unstable = {p: v for p, v in per_case.items() if len({e for _, e, _ in v}) > 1}
 
     n = len(CASES) * repeats
-    print("\n  emotion accuracy : {}/{}  ({:.0f}%)".format(hits, n, 100 * hits / n))
-    print("  median latency   : {:.2f}s".format(sorted(times)[n // 2]))
-    print("  schema violations: {}".format(len(invalid)))
-    print("  gesture tone misses: {}".format(len(tone_misses)))
+    print(f"\n  emotion accuracy : {hits}/{n}  ({100 * hits / n:.0f}%)")
+    print(f"  median latency   : {sorted(times)[n // 2]:.2f}s")
+    print(f"  schema violations: {len(invalid)}")
+    print(f"  gesture tone misses: {len(tone_misses)}")
     if repeats > 1:
-        print("  unstable across runs: {}/{} cases".format(len(unstable), len(CASES)))
+        print(f"  unstable across runs: {len(unstable)}/{len(CASES)} cases")
         for prompt, runs in unstable.items():
-            print("      {!r} -> {}".format(
-                prompt[:38], ", ".join(sorted({e for _, e, _ in runs}))))
+            print(
+                "      {!r} -> {}".format(prompt[:38], ", ".join(sorted({e for _, e, _ in runs})))
+            )
     if tone_misses:
         for prompt, g, why in tone_misses:
-            print("      {!r} -> {}  ({})".format(prompt[:38], g, why))
+            print(f"      {prompt[:38]!r} -> {g}  ({why})")
     return {
         "accuracy": hits / n,
         "invalid": invalid,
@@ -135,13 +136,13 @@ def mechanical_check(scored, pause=1.5):
     case and not another is exactly the kind of intermittent fault a single
     sample hides.
     """
-    from ohbot_kit import audio
-    from ohbot_kit import config as config_mod
-    from ohbot_kit import tts
     from ohbot import ohbot
+
+    from ohbot_kit import audio, tts
+    from ohbot_kit import config as config_mod
     from ohbot_kit.robot import Ohbot
 
-    print("\n2. MECHANICAL -- performing all {} cases on the robot".format(len(scored)))
+    print(f"\n2. MECHANICAL -- performing all {len(scored)} cases on the robot")
     print("   Watch the face. Each case is announced first.\n")
 
     cfg = config_mod.load(warn=False)
@@ -149,7 +150,7 @@ def mechanical_check(scored, pause=1.5):
         audio.install_output(audio.resolve(cfg.get("audio.output_device"), audio.OUTPUT))
         tts.install(tts.KokoroTTS(voice=cfg.get("tts.voice", "af_heart")))
     except Exception as e:
-        print("  (tts setup: {})".format(e))
+        print(f"  (tts setup: {e})")
 
     events = []
     original_move = ohbot.move
@@ -174,17 +175,17 @@ def mechanical_check(scored, pause=1.5):
                 bot.set_state("listening")
                 time.sleep(pause)
 
-                print("  [{:2}/{}] {}".format(i, len(scored), prompt))
-                print("         -> {} / {}".format(emotion, gesture))
+                print(f"  [{i:2}/{len(scored)}] {prompt}")
+                print(f"         -> {emotion} / {gesture}")
 
                 # Spoken marker, deliberately flat, so the emotional delivery
                 # that follows is unmistakably the robot's response.
-                bot.speak("Test {}.".format(i))
+                bot.speak(f"Test {i}.")
                 time.sleep(0.4)
 
                 # The scenario, so an observer knows what it is reacting to.
                 bot.set_state("thinking")
-                bot.speak("They said: {}".format(prompt))
+                bot.speak(f"They said: {prompt}")
                 time.sleep(0.5)
 
                 events.clear()
@@ -198,13 +199,21 @@ def mechanical_check(scored, pause=1.5):
                 gest = [e for e in during if e[1] not in mouth]
                 overlapped = bool(lip and gest)
                 results.append(
-                    {"prompt": prompt, "emotion": emotion, "gesture": gesture,
-                     "lip": len(lip), "gest": len(gest), "overlap": overlapped,
-                     "seconds": t1 - t0}
+                    {
+                        "prompt": prompt,
+                        "emotion": emotion,
+                        "gesture": gesture,
+                        "lip": len(lip),
+                        "gest": len(gest),
+                        "overlap": overlapped,
+                        "seconds": t1 - t0,
+                    }
                 )
-                print("         {}  {:.1f}s  lip={} gesture={}\n".format(
-                    "overlap OK" if overlapped else "NO OVERLAP",
-                    t1 - t0, len(lip), len(gest)))
+                print(
+                    "         {}  {:.1f}s  lip={} gesture={}\n".format(
+                        "overlap OK" if overlapped else "NO OVERLAP", t1 - t0, len(lip), len(gest)
+                    )
+                )
 
             bot.express("neutral")
             bot.speak("That is all twelve tests.", emotion="happy", gesture="nod")
@@ -215,9 +224,9 @@ def mechanical_check(scored, pause=1.5):
     total_lip = sum(r["lip"] for r in results)
     total_gest = sum(r["gest"] for r in results)
 
-    print("  cases with gesture overlapping speech : {}/{}".format(overlaps, len(results)))
-    print("  total lip-sync moves                  : {}".format(total_lip))
-    print("  total gesture moves                   : {}".format(total_gest))
+    print(f"  cases with gesture overlapping speech : {overlaps}/{len(results)}")
+    print(f"  total lip-sync moves                  : {total_lip}")
+    print(f"  total gesture moves                   : {total_gest}")
 
     silent = [r for r in results if not r["gest"]]
     if silent:
@@ -226,9 +235,12 @@ def mechanical_check(scored, pause=1.5):
             print("      {!r} ({})".format(r["prompt"][:40], r["gesture"]))
 
     ok = overlaps == len(results)
-    print("\n  {} gesture and lip sync overlapped on {}".format(
-        "PASS --" if ok else "FAIL --", "every case" if ok else
-        "only {} of {} cases".format(overlaps, len(results))))
+    print(
+        "\n  {} gesture and lip sync overlapped on {}".format(
+            "PASS --" if ok else "FAIL --",
+            "every case" if ok else f"only {overlaps} of {len(results)} cases",
+        )
+    )
     return {"concurrent": ok, "results": results}
 
 
@@ -263,8 +275,9 @@ def main():
         default=1.5,
         help="seconds held at neutral between cases (default 1.5)",
     )
-    p.add_argument("--repeats", type=int, default=1,
-                   help="runs per case; >1 exposes run-to-run instability")
+    p.add_argument(
+        "--repeats", type=int, default=1, help="runs per case; >1 exposes run-to-run instability"
+    )
     p.add_argument("--model", default=None)
     args = p.parse_args()
 
@@ -274,9 +287,8 @@ def main():
     model = args.model or cfg.get("llm.model", llm.DEFAULT_MODEL)
     host = cfg.get("llm.host", llm.HOST)
 
-    print("Empathy layer check -- model: {}".format(model))
-    print("  {} emotions, {} gestures".format(
-        len(expression.EMOTIONS), len(expression.GESTURE_NAMES)))
+    print(f"Empathy layer check -- model: {model}")
+    print(f"  {len(expression.EMOTIONS)} emotions, {len(expression.GESTURE_NAMES)} gestures")
 
     try:
         llm.check_model(model, host)
@@ -300,9 +312,7 @@ def main():
         failed.append("could not reach the model -- no scores were produced")
     elif sem["accuracy"] < 0.75:
         failed.append(
-            "emotion accuracy {:.0f}%, below the 75% threshold".format(
-                100 * sem["accuracy"]
-            )
+            "emotion accuracy {:.0f}%, below the 75% threshold".format(100 * sem["accuracy"])
         )
     if sem and sem["invalid"]:
         failed.append("schema not binding -- values outside the enum")
@@ -314,7 +324,7 @@ def main():
     if failed:
         print("PROBLEMS:")
         for f in failed:
-            print("  - {}".format(f))
+            print(f"  - {f}")
         return 1
     print("Measurable checks pass. Now do the perceptual checklist above.")
     return 0

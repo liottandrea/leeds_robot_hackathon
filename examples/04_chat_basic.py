@@ -14,7 +14,7 @@ import _bootstrap  # noqa: F401
 from ohbot_kit import Ohbot, OllamaError, setup
 
 cfg, convo, robot_kwargs = setup()
-convo.warm_up()   # load the model now, so the first real reply isn't slow
+convo.warm_up()  # load the model now, so the first real reply isn't slow
 
 print("Type to chat. Ctrl-C or /quit to stop.\n")
 
@@ -33,7 +33,7 @@ with Ohbot(**robot_kwargs) as bot:
                     print(sentence, end=" ", flush=True)
                     bot.speak(sentence)
             except OllamaError as e:
-                print("\n[error] {}".format(e))
+                print(f"\n[error] {e}")
             print()
             bot.set_state("listening")
     except (KeyboardInterrupt, EOFError):

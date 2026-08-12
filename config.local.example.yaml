@@ -22,3 +22,16 @@ audio:
 # Those keyframes are then skipped instead of the gesture failing.
 # robot:
 #   has_headroll: false
+
+# FOR A TEAMS CALL (examples/10_teams_call.py) the devices are virtual cables
+# rather than hardware, so both names change. Build the devices first --
+# docs/TEAMS.md walks through it -- then use something like:
+#
+# audio:
+#   input_device: "Ohbot Ears"     # Aggregate: BlackHole 2ch + your microphone
+#   output_device: "Ohbot Voice"   # Multi-Output: BlackHole 16ch + speakers
+#
+# speech_to_text:
+#   silence_seconds: 1.2           # people pause mid-sentence on calls
+#
+# Check it with: python tools/check_call_audio.py

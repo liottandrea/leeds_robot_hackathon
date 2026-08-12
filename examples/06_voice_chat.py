@@ -32,22 +32,22 @@ with Ohbot(**robot_kwargs) as bot:
     bot.speak("Hello! I am listening.", emotion="happy", gesture="perk_up")
     try:
         while True:
-            bot.listening(True)             # nod and blink while you talk
+            bot.listening(True)  # nod and blink while you talk
             audio_in = listener.record_utterance(bot)
             if audio_in is None:
                 continue
             text = listener.transcribe(audio_in)
             if not text:
                 continue
-            print("You: {}".format(text))
+            print(f"You: {text}")
             bot.listening(False)
 
             bot.set_state("thinking")
             for sentence in convo.stream_sentences(text):
-                print("Ohbot: {}".format(sentence))
+                print(f"Ohbot: {sentence}")
                 bot.speak(sentence)
     except MicrophoneBlocked as e:
-        print("\n[microphone] {}".format(e))
+        print(f"\n[microphone] {e}")
     except KeyboardInterrupt:
         print()
     bot.speak("Goodbye!")

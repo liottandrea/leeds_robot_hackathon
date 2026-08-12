@@ -4,19 +4,19 @@ Downloads what's missing, warms up every model so the first live response isn't
 slow, and checks each thing that has to be true for the demo to work -- so you
 find out here rather than in front of an audience.
 
-    python setup_demo.py            # check, download, warm up
-    python setup_demo.py --smoke    # also make the robot say one line
+    python tools/check_setup.py            # check, download, warm up
+    python tools/check_setup.py --smoke    # also make the robot say one line
 
 Exits non-zero if anything critical failed.
 """
-
-import _bootstrap  # noqa: F401
 
 import argparse
 import os
 import platform
 import sys
 import time
+
+import _bootstrap  # noqa: F401
 
 CRITICAL = "critical"
 WARNING = "warning"
@@ -32,16 +32,16 @@ def report(name, ok, detail="", level=CRITICAL):
         mark, label = "WARN", ""
     else:
         mark, label = "FAIL", ""
-    print("  [{}] {}{}".format(mark, name, label))
+    print(f"  [{mark}] {name}{label}")
     if detail:
         for line in str(detail).strip().splitlines():
-            print("         {}".format(line))
+            print(f"         {line}")
     results.append((name, ok, level))
     return ok
 
 
 def section(title):
-    print("\n{}".format(title))
+    print(f"\n{title}")
 
 
 # -- checks ---------------------------------------------------------------
@@ -52,7 +52,7 @@ def check_python():
     ok = (3, 10) <= (v.major, v.minor) < (3, 14)
     in_venv = sys.prefix != sys.base_prefix
     detail = "" if ok else "kokoro-onnx needs >=3.10,<3.14. Recreate: uv venv --python 3.11"
-    report("Python {}.{}.{}".format(v.major, v.minor, v.micro), ok, detail)
+    report(f"Python {v.major}.{v.minor}.{v.micro}", ok, detail)
     report(
         "Running inside the project venv",
         in_venv,
@@ -111,13 +111,13 @@ def check_ollama(model, host="http://localhost:11434"):
     except llm.OllamaError as e:
         return report("Ollama running", False, e)
 
-    report("Ollama running", True, "{} model(s) installed".format(len(models)))
+    report("Ollama running", True, f"{len(models)} model(s) installed")
 
     try:
         llm.check_model(model, host)
-        return report("Chat model '{}' installed".format(model), True)
+        return report(f"Chat model '{model}' installed", True)
     except llm.OllamaError as e:
-        return report("Chat model '{}' installed".format(model), False, e)
+        return report(f"Chat model '{model}' installed", False, e)
 
 
 def download(url, dest):
@@ -136,9 +136,7 @@ def download(url, dest):
                 done += len(block)
                 if total:
                     print(
-                        "\r         {:.0f}% of {:.0f} MB".format(
-                            done * 100 / total, total / 1e6
-                        ),
+                        f"\r         {done * 100 / total:.0f}% of {total / 1e6:.0f} MB",
                         end="",
                         flush=True,
                     )
@@ -153,9 +151,9 @@ def check_kokoro():
         if os.path.exists(path):
             continue
         name = os.path.basename(path)
-        print("  [....] Downloading {} ...".format(name))
+        print(f"  [....] Downloading {name} ...")
         try:
-            download("{}/{}".format(tts.DOWNLOAD_BASE, name), path)
+            download(f"{tts.DOWNLOAD_BASE}/{name}", path)
         except Exception as e:
             return report("Kokoro model files", False, e)
 
@@ -163,7 +161,7 @@ def check_kokoro():
         "Kokoro model files present",
         tts.available(),
         "\n".join(
-            "{}: {:.0f} MB".format(os.path.basename(p), os.path.getsize(p) / 1e6)
+            f"{os.path.basename(p)}: {os.path.getsize(p) / 1e6:.0f} MB"
             for p in (tts.MODEL_FILE, tts.VOICES_FILE)
             if os.path.exists(p)
         ),
@@ -176,20 +174,20 @@ def check_devices(cfg):
 
     resolved = {}
     for key, kind in (("input_device", audio.INPUT), ("output_device", audio.OUTPUT)):
-        name = cfg.get("audio.{}".format(key))
+        name = cfg.get(f"audio.{key}")
         try:
             index = audio.resolve(name, kind)
         except audio.DeviceNotFound as e:
-            report("Audio {}".format(kind), False, e)
+            report(f"Audio {kind}", False, e)
             resolved[kind] = None
             continue
         resolved[kind] = index
         report(
-            "Audio {}".format(kind),
+            f"Audio {kind}",
             True,
             "{}{}".format(
                 audio.device_name(index),
-                "" if name else "  (system default -- set audio.{} to pin it)".format(key),
+                "" if name else f"  (system default -- set audio.{key} to pin it)",
             ),
         )
     return resolved
@@ -227,7 +225,7 @@ def warm_ollama(model):
 
     t0 = time.time()
     llm.Conversation(model=model).warm_up()
-    report("Ollama model loaded", True, "{:.1f}s".format(time.time() - t0))
+    report("Ollama model loaded", True, f"{time.time() - t0:.1f}s")
 
 
 def warm_kokoro(voice_name):
@@ -238,9 +236,9 @@ def warm_kokoro(voice_name):
         engine = tts.KokoroTTS(voice=voice_name)
         engine.synth("Warming up.")
         return report(
-            "Kokoro loaded (voice: {})".format(voice_name),
+            f"Kokoro loaded (voice: {voice_name})",
             True,
-            "{:.1f}s, {} voices available".format(time.time() - t0, len(engine.voices())),
+            f"{time.time() - t0:.1f}s, {len(engine.voices())} voices available",
         )
     except Exception as e:
         return report("Kokoro loaded", False, e)
@@ -249,6 +247,7 @@ def warm_kokoro(voice_name):
 def warm_whisper():
     try:
         import numpy as np
+
         from ohbot_kit import voice
 
         t0 = time.time()
@@ -256,9 +255,9 @@ def warm_whisper():
         # Transcribe a second of silence purely to force the model to load.
         listener.transcribe(np.zeros(16000, dtype=np.float32))
         return report(
-            "Whisper loaded ({})".format(voice.MODEL_SIZE),
+            f"Whisper loaded ({voice.MODEL_SIZE})",
             True,
-            "{:.1f}s".format(time.time() - t0),
+            f"{time.time() - t0:.1f}s",
         )
     except Exception as e:
         return report("Whisper loaded", False, e, level=WARNING)
@@ -266,8 +265,7 @@ def warm_whisper():
 
 def smoke_test(voice_name, output_device=None):
     """Opt-in: prove the whole chain by making the robot actually speak."""
-    from ohbot_kit import audio
-    from ohbot_kit import tts
+    from ohbot_kit import audio, tts
     from ohbot_kit.robot import Ohbot
 
     try:
@@ -342,21 +340,20 @@ def main():
 
     print("\n" + "=" * 40)
     if failed:
-        print("NOT READY -- {} critical problem(s):".format(len(failed)))
+        print(f"NOT READY -- {len(failed)} critical problem(s):")
         for n in failed:
-            print("  - {}".format(n))
+            print(f"  - {n}")
         return 1
 
     if warned:
-        print("READY (with {} warning(s)):".format(len(warned)))
+        print(f"READY (with {len(warned)} warning(s)):")
         for n in warned:
-            print("  - {}".format(n))
+            print(f"  - {n}")
         print("\nTyped mode will work. Voice mode (--voice) will not.")
     else:
         print("READY. Everything checks out.")
 
-    print("\nNext:  python examples/01_hello_robot.py"
-          "     then  python examples/08_empathy_chat.py")
+    print("\nNext:  python examples/01_hello_robot.py     then  python examples/08_empathy_chat.py")
     return 0
 
 

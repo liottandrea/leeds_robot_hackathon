@@ -22,7 +22,6 @@ import sys
 import time
 
 import _bootstrap  # noqa: F401
-
 import requests
 
 from ohbot_kit import Ohbot, expression, llm, setup
@@ -38,15 +37,17 @@ try:
 except ImportError:
     sys.exit("Needs OpenCV:  pip install opencv-python")
 
-PROMPT = ("Describe what you see in one short sentence, as if you were a friendly "
-          "robot looking at it. Mention people if there are any.")
+PROMPT = (
+    "Describe what you see in one short sentence, as if you were a friendly "
+    "robot looking at it. Mention people if there are any."
+)
 
 cfg, convo, robot_kwargs = setup()
 
 try:
     llm.check_model(args.model, cfg.get("llm.host", llm.HOST))
 except llm.OllamaError as e:
-    sys.exit("{}\n\nInstall it with:  ollama pull {}".format(e, args.model))
+    sys.exit(f"{e}\n\nInstall it with:  ollama pull {args.model}")
 
 
 def look_and_describe(camera):
@@ -77,9 +78,9 @@ def look_and_describe(camera):
 
 camera = cv2.VideoCapture(args.camera)
 if not camera.isOpened():
-    sys.exit("Could not open camera {}. Check macOS camera permission.".format(args.camera))
+    sys.exit(f"Could not open camera {args.camera}. Check macOS camera permission.")
 
-print("Looking every {:.0f}s. Ctrl-C to stop.\n".format(args.interval))
+print(f"Looking every {args.interval:.0f}s. Ctrl-C to stop.\n")
 
 try:
     with Ohbot(**robot_kwargs) as bot:
@@ -91,12 +92,12 @@ try:
             description = look_and_describe(camera)
             if not description:
                 continue
-            print("[{:.1f}s] {}".format(time.time() - t0, description))
+            print(f"[{time.time() - t0:.1f}s] {description}")
 
             # Let the chat model react in character, with a face and a gesture,
             # rather than the robot flatly reading the caption aloud.
             action = convo.respond_with_action(
-                "You just looked around and saw: {}. React briefly.".format(description),
+                f"You just looked around and saw: {description}. React briefly.",
                 expression.EMOTIONS,
                 expression.GESTURE_NAMES,
             )

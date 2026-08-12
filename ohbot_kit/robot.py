@@ -22,20 +22,26 @@ its writes on `connected`, and say() still plays audio. So you can develop the
 whole conversation loop with no hardware.
 """
 
+from __future__ import annotations
+
 import random
 import threading
 import time
+from collections.abc import Sequence
+from types import TracebackType
+from typing import Literal
+
+from ohbot import ohbot
 
 from . import expression as ex
 from . import serial_safe
-from .expression import GESTURES, MOUTH, POSES, REST
-from ohbot import ohbot
+from .expression import GESTURES, MOUTH, POSES
 
 # Eye colours as (r, g, b), each 0-10.
 COLOURS = {
-    "listening": (0, 0, 10),   # blue
-    "thinking": (10, 5, 0),    # amber
-    "speaking": (0, 10, 3),    # green
+    "listening": (0, 0, 10),  # blue
+    "thinking": (10, 5, 0),  # amber
+    "speaking": (0, 10, 3),  # green
     "off": (0, 0, 0),
 }
 
@@ -45,13 +51,13 @@ class Ohbot:
 
     def __init__(
         self,
-        idle=True,
-        colours=None,
-        blink_interval=(2, 6),
-        drift_interval=(4, 9),
-        has_headroll=True,
-    ):
-        self.colours = dict(COLOURS)
+        idle: bool = True,
+        colours: dict[str, Sequence[int]] | None = None,
+        blink_interval: tuple[float, float] = (2, 6),
+        drift_interval: tuple[float, float] = (4, 9),
+        has_headroll: bool = True,
+    ) -> None:
+        self.colours: dict[str, tuple[int, ...]] = dict(COLOURS)
         if colours:
             # YAML gives lists; the ohbot calls want positional r, g, b.
             self.colours.update({k: tuple(v) for k, v in colours.items()})
@@ -68,13 +74,13 @@ class Ohbot:
         self.speaking = threading.Event()
         self._listening = threading.Event()
         self._stop = threading.Event()
-        self._idle_thread = None
-        self._gesture_thread = None
+        self._idle_thread: threading.Thread | None = None
+        self._gesture_thread: threading.Thread | None = None
         self._want_idle = idle
 
     # -- lifecycle ---------------------------------------------------------
 
-    def __enter__(self):
+    def __enter__(self) -> Ohbot:
         # Must happen before any thread touches a motor.
         serial_safe.install_write_lock()
 
@@ -87,7 +93,12 @@ class Ohbot:
             self._idle_thread.start()
         return self
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> Literal[False]:
         self._stop.set()
         for t in (self._idle_thread, self._gesture_thread):
             if t is not None:
@@ -101,7 +112,13 @@ class Ohbot:
 
     # -- speech ------------------------------------------------------------
 
-    def speak(self, text, emotion=None, gesture=None, recentre=True):
+    def speak(
+        self,
+        text: str,
+        emotion: str | None = None,
+        gesture: str | None = None,
+        recentre: bool = True,
+    ) -> None:
         """Say text aloud, optionally with a face and a movement under it.
 
         The gesture is launched first and plays *during* the speech.
@@ -131,7 +148,7 @@ class Ohbot:
                     self._gesture_thread.join(timeout=2)
                 self.recentre()
 
-    def recentre(self, speed=2):
+    def recentre(self, speed: float = 2) -> None:
         """Return head and eyes to centre so the robot faces the person again.
 
         Deliberately slow: a snap back to centre reads as a twitch, while an
@@ -143,25 +160,30 @@ class Ohbot:
 
     # -- expression --------------------------------------------------------
 
-    def express(self, emotion):
+    def express(self, emotion: str) -> None:
         """Hold a facial expression from expression.POSES."""
         pose = POSES.get(emotion)
         if pose is None:
             raise KeyError(
-                "Unknown emotion {!r}. Available: {}".format(
-                    emotion, ", ".join(sorted(POSES))
-                )
+                "Unknown emotion {!r}. Available: {}".format(emotion, ", ".join(sorted(POSES)))
             )
         self.emotion = emotion
         for motor, pos in pose.items():
             self._move(motor, pos, 4)
 
-    def gaze(self, x=5, y=5, speed=6):
+    def gaze(self, x: float = 5, y: float = 5, speed: float = 6) -> None:
         """Aim the eyes only. x: 0 right .. 10 left. y: 0 down .. 10 up."""
         for motor, pos in ex.gaze_positions(x, y).items():
             self._move(motor, pos, speed)
 
-    def look_at(self, direction=None, x=5, y=5, with_head=True, blocking=False):
+    def look_at(
+        self,
+        direction: str | None = None,
+        x: float = 5,
+        y: float = 5,
+        with_head: bool = True,
+        blocking: bool = False,
+    ) -> None:
         """Look somewhere with eyes, head turn, head pitch and a little roll.
 
             bot.look_at("up_left")      # a named direction
@@ -183,19 +205,19 @@ class Ohbot:
 
         eyes, head = ex.look_targets(x, y, with_head=with_head)
 
-        def run():
+        def run() -> None:
             for motor, pos in eyes.items():
-                self._move(motor, pos, 8)      # eyes snap
-            time.sleep(0.12)                   # the lag that sells it
+                self._move(motor, pos, 8)  # eyes snap
+            time.sleep(0.12)  # the lag that sells it
             for motor, pos in head.items():
-                self._move(motor, pos, 3)      # head follows, slower
+                self._move(motor, pos, 3)  # head follows, slower
 
         if blocking:
             run()
         else:
             threading.Thread(target=run, daemon=True).start()
 
-    def gesture(self, name, blocking=False):
+    def gesture(self, name: str, blocking: bool = False) -> None:
         """Play a keyframe sequence from expression.GESTURES.
 
         Non-blocking by default so it runs underneath speech. Only one gesture
@@ -204,9 +226,7 @@ class Ohbot:
         frames = GESTURES.get(name)
         if frames is None:
             raise KeyError(
-                "Unknown gesture {!r}. Available: {}".format(
-                    name, ", ".join(sorted(GESTURES))
-                )
+                "Unknown gesture {!r}. Available: {}".format(name, ", ".join(sorted(GESTURES)))
             )
 
         if blocking:
@@ -215,19 +235,17 @@ class Ohbot:
 
         if self._gesture_thread is not None and self._gesture_thread.is_alive():
             self._gesture_thread.join(timeout=3)
-        self._gesture_thread = threading.Thread(
-            target=self._play, args=(frames,), daemon=True
-        )
+        self._gesture_thread = threading.Thread(target=self._play, args=(frames,), daemon=True)
         self._gesture_thread.start()
 
-    def _play(self, frames):
+    def _play(self, frames: Sequence[tuple[int, float, float, float]]) -> None:
         for motor, pos, speed, hold in frames:
             if self._stop.is_set():
                 return
             self._move(motor, pos, speed)
             time.sleep(hold)
 
-    def set_eyes(self, r, g, b):
+    def set_eyes(self, r: int, g: int, b: int) -> None:
         """Set the eye LEDs directly. Each channel is 0-10.
 
         Needs the Illuminating Eyes accessory; without it this is a harmless
@@ -235,14 +253,14 @@ class Ohbot:
         """
         ohbot.setEyeColour(r, g, b)
 
-    def set_state(self, state):
+    def set_state(self, state: str) -> None:
         """Signal listening / thinking / speaking via eye colour."""
         self.state = state
         ohbot.setEyeColour(*self.colours.get(state, self.colours["off"]))
 
     # -- listening ---------------------------------------------------------
 
-    def listening(self, on=True):
+    def listening(self, on: bool = True) -> None:
         """Backchannel mode: nod and blink while the USER is talking.
 
         Looking attentive while being spoken to does more for the illusion of
@@ -257,7 +275,7 @@ class Ohbot:
 
     # -- sensors -----------------------------------------------------------
 
-    def read_sensor(self, index):
+    def read_sensor(self, index: int) -> float:
         """Read a sensor, safely.
 
         The library's readSensor() calls ser.flushInput() with no guard, so it
@@ -276,7 +294,7 @@ class Ohbot:
 
     # -- internals ---------------------------------------------------------
 
-    def _move(self, motor, pos, speed=5):
+    def _move(self, motor: int, pos: float, speed: float = 5) -> None:
         """Move one motor, honouring the mouth and head-roll rules."""
         if self._stop.is_set():
             return
@@ -287,7 +305,7 @@ class Ohbot:
             return
         ohbot.move(motor, pos, speed)
 
-    def _idle_loop(self):
+    def _idle_loop(self) -> None:
         """Blink, drift, and backchannel-nod so the robot never looks frozen.
 
         Unlike the earlier version, this keeps running during speech -- the

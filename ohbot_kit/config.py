@@ -11,8 +11,12 @@ Missing keys always fall back to the constants defined in each module, so a
 partial config -- or no config at all -- still runs.
 """
 
+from __future__ import annotations
+
 import os
 import sys
+from collections.abc import Iterable
+from typing import Any
 
 import yaml
 
@@ -33,7 +37,7 @@ KNOWN_SECTIONS = {
 }
 
 
-def _deep_merge(base, override):
+def _deep_merge(base: dict[str, Any], override: dict[str, Any] | None) -> dict[str, Any]:
     """Recursively merge override into base, returning a new dict."""
     result = dict(base)
     for key, value in (override or {}).items():
@@ -47,11 +51,11 @@ def _deep_merge(base, override):
 class Config:
     """Nested settings with dotted-path lookup."""
 
-    def __init__(self, data=None, sources=()):
+    def __init__(self, data: dict[str, Any] | None = None, sources: Iterable[str] = ()) -> None:
         self.data = data or {}
         self.sources = list(sources)
 
-    def get(self, path, default=None):
+    def get(self, path: str, default: Any = None) -> Any:
         """Fetch by dotted path, e.g. get("llm.model").
 
         Returns default when the path is missing or explicitly null, so a
@@ -64,11 +68,11 @@ class Config:
             node = node[part]
         return default if node is None else node
 
-    def section(self, name):
+    def section(self, name: str) -> dict[str, Any]:
         value = self.data.get(name)
         return value if isinstance(value, dict) else {}
 
-    def persona(self, name=None):
+    def persona(self, name: str | None = None) -> dict[str, Any]:
         """Resolve the active persona to a dict of overrides."""
         name = name or self.get("persona")
         if not name:
@@ -82,14 +86,18 @@ class Config:
             )
         return personas[name] or {}
 
-    def __repr__(self):
-        return "Config(sources={})".format(self.sources)
+    def __repr__(self) -> str:
+        return f"Config(sources={self.sources})"
 
 
-def load(path=DEFAULT_PATH, local_path=LOCAL_PATH, warn=True):
+def load(
+    path: str | None = DEFAULT_PATH,
+    local_path: str | None = LOCAL_PATH,
+    warn: bool = True,
+) -> Config:
     """Load config.yaml plus any config.local.yaml override."""
-    data = {}
-    sources = []
+    data: dict[str, Any] = {}
+    sources: list[str] = []
 
     for candidate in (path, local_path):
         if not candidate or not os.path.exists(candidate):
@@ -98,10 +106,10 @@ def load(path=DEFAULT_PATH, local_path=LOCAL_PATH, warn=True):
             with open(candidate) as f:
                 loaded = yaml.safe_load(f) or {}
         except yaml.YAMLError as e:
-            raise RuntimeError("Could not parse {}: {}".format(candidate, e)) from e
+            raise RuntimeError(f"Could not parse {candidate}: {e}") from e
 
         if not isinstance(loaded, dict):
-            raise RuntimeError("{} must contain a mapping at the top level".format(candidate))
+            raise RuntimeError(f"{candidate} must contain a mapping at the top level")
 
         data = _deep_merge(data, loaded)
         sources.append(candidate)

@@ -6,10 +6,15 @@ so the robot can start speaking before the model has finished generating.
 Uses plain requests against the HTTP API -- no extra dependency needed.
 """
 
+from __future__ import annotations
+
+import contextlib
 import json
 import queue
 import re
 import threading
+from collections.abc import Iterator, Sequence
+from typing import Any
 
 import requests
 
@@ -62,7 +67,7 @@ class OllamaError(RuntimeError):
     """Raised when Ollama is unreachable or misconfigured."""
 
 
-def sanitise(text):
+def sanitise(text: str) -> str:
     """Strip anything that would be mangled or read aloud literally by TTS."""
     text = _THINK_BLOCK.sub("", text)
     text = _UNCLOSED_THINK.sub("", text)  # reasoning model cut off mid-think
@@ -73,23 +78,21 @@ def sanitise(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
-def list_models(host=HOST):
+def list_models(host: str = HOST) -> list[str]:
     """Return the names of locally installed models."""
     try:
-        r = requests.get("{}/api/tags".format(host), timeout=5)
+        r = requests.get(f"{host}/api/tags", timeout=5)
         r.raise_for_status()
         return [m["name"] for m in r.json().get("models", [])]
     except requests.RequestException as e:
-        raise OllamaError(
-            "Cannot reach Ollama at {}. Is it running? Try: ollama serve".format(host)
-        ) from e
+        raise OllamaError(f"Cannot reach Ollama at {host}. Is it running? Try: ollama serve") from e
 
 
-def check_model(model, host=HOST):
+def check_model(model: str, host: str = HOST) -> None:
     """Raise a helpful error if the model isn't installed."""
     available = list_models(host)
     # Ollama reports "phi4-mini:latest"; accept the bare name too.
-    if model in available or "{}:latest".format(model) in available:
+    if model in available or f"{model}:latest" in available:
         return
     raise OllamaError(
         "Model {!r} is not installed.\nAvailable: {}\nInstall with: ollama pull {}".format(
@@ -103,27 +106,29 @@ class Conversation:
 
     def __init__(
         self,
-        model=DEFAULT_MODEL,
-        system=SYSTEM_PROMPT,
-        host=HOST,
-        temperature=0.7,
-        num_predict=80,
-    ):
+        model: str = DEFAULT_MODEL,
+        system: str = SYSTEM_PROMPT,
+        host: str = HOST,
+        temperature: float = 0.7,
+        num_predict: int = 80,
+    ) -> None:
         self.model = model
         self.system = system
         self.host = host
         self.temperature = temperature
         self.num_predict = num_predict
+        self.messages: list[dict[str, str]] = []
+
+    def reset(self) -> None:
         self.messages = []
 
-    def reset(self):
-        self.messages = []
-
-    def warm_up(self):
+    def warm_up(self) -> None:
         """Force the model to load now, so the first real reply isn't slow."""
-        try:
+        # Warming up is an optimisation; the real call surfaces any problem
+        # with a message the caller can act on.
+        with contextlib.suppress(requests.RequestException):
             requests.post(
-                "{}/api/chat".format(self.host),
+                f"{self.host}/api/chat",
                 json={
                     "model": self.model,
                     "messages": [{"role": "user", "content": "hi"}],
@@ -132,18 +137,15 @@ class Conversation:
                 },
                 timeout=TIMEOUT,
             )
-        except requests.RequestException:
-            pass  # Not fatal -- the real call will surface any problem.
 
-    def _raw_stream(self, out):
+    def _raw_stream(self, out: queue.Queue[Any]) -> None:
         """Producer: push response fragments onto the queue, then a None sentinel."""
         try:
             r = requests.post(
-                "{}/api/chat".format(self.host),
+                f"{self.host}/api/chat",
                 json={
                     "model": self.model,
-                    "messages": [{"role": "system", "content": self.system}]
-                    + self.messages,
+                    "messages": [{"role": "system", "content": self.system}] + self.messages,
                     "stream": True,
                     "options": {
                         "temperature": self.temperature,
@@ -165,11 +167,11 @@ class Conversation:
                 if chunk.get("done"):
                     break
         except (requests.RequestException, ValueError) as e:
-            out.put(OllamaError("Ollama request failed: {}".format(e)))
+            out.put(OllamaError(f"Ollama request failed: {e}"))
         finally:
             out.put(None)
 
-    def stream_sentences(self, user_text, max_sentences=MAX_SENTENCES):
+    def stream_sentences(self, user_text: str, max_sentences: int = MAX_SENTENCES) -> Iterator[str]:
         """Yield the reply one sentence at a time as the model generates it.
 
         Generation happens on a producer thread so the caller can be speaking
@@ -181,12 +183,12 @@ class Conversation:
         """
         self.messages.append({"role": "user", "content": user_text})
 
-        out = queue.Queue()
+        out: queue.Queue[Any] = queue.Queue()
         producer = threading.Thread(target=self._raw_stream, args=(out,), daemon=True)
         producer.start()
 
         buffer = ""
-        spoken = []
+        spoken: list[str] = []
         truncated = False
 
         while not truncated:
@@ -225,10 +227,15 @@ class Conversation:
         else:
             self.messages.pop()  # nothing came back; don't poison the history
 
-
     # -- structured "act as you speak" mode --------------------------------
 
-    def respond_with_action(self, user_text, emotions, gestures, temperature=None):
+    def respond_with_action(
+        self,
+        user_text: str,
+        emotions: Sequence[str],
+        gestures: Sequence[str],
+        temperature: float | None = None,
+    ) -> dict[str, Any]:
         """Get a reply plus the emotion and gesture to perform with it.
 
         Uses Ollama's `format` JSON-schema mode rather than the tools API.
@@ -258,7 +265,7 @@ class Conversation:
 
             gesture_menu = expression.gesture_menu()
         except Exception:
-            gesture_menu = "\n".join("- {}".format(g) for g in gestures)
+            gesture_menu = "\n".join(f"- {g}" for g in gestures)
 
         system = self.system + ACTION_SUFFIX.format(
             emotions=", ".join(emotions), gestures=gesture_menu
@@ -266,21 +273,19 @@ class Conversation:
 
         try:
             r = requests.post(
-                "{}/api/chat".format(self.host),
+                f"{self.host}/api/chat",
                 json={
                     "model": self.model,
                     "messages": [{"role": "system", "content": system}] + self.messages,
                     "stream": False,
-                    "format": schema,
+                    "format": schema,  # type: ignore[dict-item]
                     "options": {
                         # Cooler than plain chat on purpose. Picking the right
                         # emotion is a classification, not a creative act: at
                         # 0.7 the same input scored 12/12 on one run and 10/12
                         # on the next, with "what is two plus two?" drawing
                         # `excited`. Lower temperature stabilises the choice.
-                        "temperature": (
-                            ACTION_TEMPERATURE if temperature is None else temperature
-                        ),
+                        "temperature": (ACTION_TEMPERATURE if temperature is None else temperature),
                         "num_predict": self.num_predict,
                     },
                 },
@@ -291,7 +296,7 @@ class Conversation:
             action = json.loads(content)
         except (requests.RequestException, ValueError) as e:
             self.messages.pop()
-            raise OllamaError("Structured request failed: {}".format(e)) from e
+            raise OllamaError(f"Structured request failed: {e}") from e
 
         action["say"] = sanitise(action.get("say", ""))
         if action["say"]:
@@ -316,7 +321,7 @@ nod, not cheerfulness. Never shake your head at good news -- that reads as "no".
 Prefer subtle choices; constant big gestures look twitchy rather than expressive."""
 
 
-def chat_once(prompt, model=DEFAULT_MODEL):
+def chat_once(prompt: str, model: str = DEFAULT_MODEL) -> str:
     """One-shot helper for testing the LLM path without the robot attached."""
     return " ".join(Conversation(model).stream_sentences(prompt))
 

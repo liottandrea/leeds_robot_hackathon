@@ -25,6 +25,8 @@ but a command can no longer be cut in half by another thread's bytes.
 Install this BEFORE starting any thread that moves motors.
 """
 
+from __future__ import annotations
+
 import threading
 
 from ohbot import ohbot
@@ -38,7 +40,7 @@ _original_serwrite = ohbot._serwrite
 _installed = False
 
 
-def install_write_lock():
+def install_write_lock() -> threading.RLock:
     """Wrap ohbot._serwrite so concurrent writers can't interleave mid-message.
 
     Idempotent: calling it twice will not double-wrap.
@@ -47,7 +49,7 @@ def install_write_lock():
     if _installed:
         return lock
 
-    def _locked_serwrite(s):
+    def _locked_serwrite(s: str) -> None:
         with lock:
             _original_serwrite(s)
 
@@ -56,12 +58,12 @@ def install_write_lock():
     return lock
 
 
-def uninstall_write_lock():
+def uninstall_write_lock() -> None:
     """Restore the unguarded write. Mainly here to prove the lock matters."""
     global _installed
     ohbot._serwrite = _original_serwrite
     _installed = False
 
 
-def is_installed():
+def is_installed() -> bool:
     return _installed

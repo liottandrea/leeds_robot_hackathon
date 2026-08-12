@@ -15,10 +15,9 @@ import time
 
 import _bootstrap  # noqa: F401
 
-from ohbot_kit import audio
+from ohbot_kit import audio, tts
 from ohbot_kit import config as config_mod
 from ohbot_kit import expression as ex
-from ohbot_kit import tts
 from ohbot_kit.robot import Ohbot
 
 
@@ -27,17 +26,17 @@ def setup_audio(cfg):
         audio.install_output(audio.resolve(cfg.get("audio.output_device"), audio.OUTPUT))
         tts.install(tts.KokoroTTS(voice=cfg.get("tts.voice", "af_heart")))
     except Exception as e:
-        print("[tts] falling back to macOS say: {}".format(e))
+        print(f"[tts] falling back to macOS say: {e}")
 
 
 def show_poses(bot):
     print("\nPOSES -- held facial expressions\n")
     for name in ex.EMOTIONS:
-        print("  {}".format(name))
+        print(f"  {name}")
         bot.express("neutral")
         time.sleep(0.6)
         bot.express(name)
-        bot.speak("This is {}.".format(name), recentre=False)
+        bot.speak(f"This is {name}.", recentre=False)
         time.sleep(1.0)
     bot.express("neutral")
     bot.recentre()
@@ -47,7 +46,7 @@ def show_gestures(bot):
     print("\nGESTURES -- movements, played underneath speech\n")
     for name in ex.GESTURE_NAMES:
         meaning = ex.GESTURE_MEANINGS.get(name, "")
-        print("  {:<14} {}".format(name, meaning))
+        print(f"  {name:<14} {meaning}")
         bot.express("neutral")
         bot.recentre()
         time.sleep(0.8)
@@ -59,10 +58,19 @@ def show_gestures(bot):
 
 def show_looks(bot):
     print("\nLOOKING -- eyes lead, head follows partway\n")
-    for name in ["up_left", "up", "up_right", "right", "down_right",
-                 "down", "down_left", "left", "user"]:
+    for name in [
+        "up_left",
+        "up",
+        "up_right",
+        "right",
+        "down_right",
+        "down",
+        "down_left",
+        "left",
+        "user",
+    ]:
         x, y = ex.LOOK_DIRECTIONS[name]
-        print("  {:<11} (x={}, y={})".format(name, x, y))
+        print(f"  {name:<11} (x={x}, y={y})")
         bot.look_at(name)
         time.sleep(1.4)
 

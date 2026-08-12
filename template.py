@@ -27,7 +27,6 @@ def main():
     # `with` guarantees the motors are detached at the end, even on a crash.
     # Without it they stay attached, drawing current and buzzing.
     with Ohbot(**robot_kwargs) as bot:
-
         bot.speak("Hello, I am ready.", emotion="happy", gesture="perk_up")
 
         # ------------------------------------------------------------------
@@ -55,13 +54,9 @@ def main():
             if not text or text in ("/quit", "/exit"):
                 break
 
-            action = convo.respond_with_action(
-                text, expression.EMOTIONS, expression.GESTURE_NAMES
-            )
+            action = convo.respond_with_action(text, expression.EMOTIONS, expression.GESTURE_NAMES)
             print("Ohbot: {}".format(action["say"]))
-            bot.speak(
-                action["say"], emotion=action["emotion"], gesture=action["gesture"]
-            )
+            bot.speak(action["say"], emotion=action["emotion"], gesture=action["gesture"])
 
         bot.speak("Goodbye!", emotion="happy", gesture="nod")
 

@@ -32,9 +32,7 @@ import sys
 import _bootstrap  # noqa: F401
 
 from ohbot_kit import config as config_mod
-from ohbot_kit import expression
-from ohbot_kit import llm
-from ohbot_kit import tts
+from ohbot_kit import expression, llm, tts
 from ohbot_kit.robot import Ohbot
 
 
@@ -63,16 +61,13 @@ def main():
     try:
         tts.install(tts.KokoroTTS(voice=persona.get("voice", tts.DEFAULT_VOICE)))
     except Exception as e:
-        print("[tts] using macOS say: {}".format(e), file=sys.stderr)
+        print(f"[tts] using macOS say: {e}", file=sys.stderr)
 
     listener = None
     if args.voice:
-        from ohbot_kit import audio
-        from ohbot_kit import voice
+        from ohbot_kit import audio, voice
 
-        listener = voice.Listener(
-            device=audio.resolve(cfg.get("audio.input_device"), audio.INPUT)
-        )
+        listener = voice.Listener(device=audio.resolve(cfg.get("audio.input_device"), audio.INPUT))
 
     print("Empathy chat. Say something with feeling in it. Ctrl-C to stop.\n")
     convo.warm_up()
@@ -91,7 +86,7 @@ def main():
                     text = listener.transcribe(audio_in)
                     if not text:
                         continue
-                    print("You: {}".format(text))
+                    print(f"You: {text}")
                 else:
                     text = input("You: ").strip()
                 bot.listening(False)
@@ -107,13 +102,11 @@ def main():
                         text, expression.EMOTIONS, expression.GESTURE_NAMES
                     )
                 except llm.OllamaError as e:
-                    print("[llm] {}".format(e), file=sys.stderr)
+                    print(f"[llm] {e}", file=sys.stderr)
                     continue
 
                 print(
-                    "Ohbot [{}/{}]: {}".format(
-                        action["emotion"], action["gesture"], action["say"]
-                    )
+                    "Ohbot [{}/{}]: {}".format(action["emotion"], action["gesture"], action["say"])
                 )
 
                 bot.gaze(action.get("gaze_x", 5), action.get("gaze_y", 5))

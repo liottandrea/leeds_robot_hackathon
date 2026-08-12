@@ -1,5 +1,8 @@
 # Ohbot Hackathon Kit
 
+[![CI](https://github.com/liottandrea/robot_hackathon/actions/workflows/ci.yml/badge.svg)](https://github.com/liottandrea/robot_hackathon/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+
 A desk robot that listens, thinks and reacts — with a face. Everything runs **locally**:
 no API keys, no internet, nothing leaves your laptop.
 
@@ -53,6 +56,7 @@ python my_project.py
 | --- | --- |
 | **[docs/API.md](docs/API.md)** | Every call, pose, gesture and motor. Keep it open. |
 | **[docs/CHALLENGES.md](docs/CHALLENGES.md)** | Project ideas, easy → ambitious, if you're still deciding |
+| [docs/TEAMS.md](docs/TEAMS.md) | Put the robot in a Teams call: it listens, and speaks when named |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Every failure we hit, and its fix |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How it works, and why some odd-looking things are load-bearing |
 
@@ -71,6 +75,7 @@ Numbered in the order worth reading them.
 | `07_sensors.py` | react to someone approaching |
 | **`08_empathy_chat.py`** | **the flagship** — reacts with face and body, not just words |
 | `09_vision.py` | webcam + a vision model: it describes what it sees |
+| `10_teams_call.py` | it sits in a Teams call and answers when named — [docs/TEAMS.md](docs/TEAMS.md) |
 
 ## What it can do
 
@@ -107,3 +112,18 @@ config.yaml    settings + personas
 ```
 
 Machine-specific settings (audio devices) go in `config.local.yaml`, which is git-ignored.
+
+## Contributing
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+pre-commit install
+pytest                       # ~2s, no robot needed
+```
+
+The test suite fakes the hardware, so it runs anywhere. See
+[CONTRIBUTING.md](CONTRIBUTING.md), and read
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before changing anything that looks odd —
+several strange-looking things are load-bearing.
+
+Licensed under [Apache 2.0](LICENSE). Third-party components are listed in [NOTICE](NOTICE).

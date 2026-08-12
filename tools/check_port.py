@@ -32,7 +32,7 @@ def probe(device):
             ser.write(("v" + "\n").encode("latin-1"))
             return ser.readline()
     except Exception as e:
-        print("    error: {}".format(e))
+        print(f"    error: {e}")
         return None
 
 
@@ -44,21 +44,21 @@ if not ports:
 
 print("Serial ports found:")
 for p in ports:
-    print("  {}  ({})".format(p.device, p.description))
+    print(f"  {p.device}  ({p.description})")
 
 found = []
 print("\nProbing ports:")
 for p in ports:
     if not worth_probing(p.device):
-        print("  {}  skipped (macOS: no 'usb' in name)".format(p.device))
+        print(f"  {p.device}  skipped (macOS: no 'usb' in name)")
         continue
 
-    print("  {}  ...".format(p.device))
+    print(f"  {p.device}  ...")
     reply = probe(p.device)
     if reply is None:
         continue
 
-    print("    replied: {!r}".format(reply))
+    print(f"    replied: {reply!r}")
     if b"v1" in reply or b"v2" in reply:
         print("    -> OHBOT FOUND")
         found.append(p.device)

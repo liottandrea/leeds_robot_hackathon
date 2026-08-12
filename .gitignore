@@ -6,3 +6,8 @@ __pycache__/
 .DS_Store
 models/
 config.local.yaml
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

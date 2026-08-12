@@ -20,18 +20,20 @@ range from ohbotData/MotorDefinitionsv21.omd, so you cannot drive a servo past
 its limits by choosing a silly number here.
 """
 
+from __future__ import annotations
+
 from ohbot import ohbot
 
 # Motor numbers, named for readability. All eight exist -- note that TOPLIP (4)
 # and HEADROLL (7) are real despite being absent from the vendor's docs table.
-HEADNOD = ohbot.HEADNOD      # 0  pitch: low = looking down
-HEADTURN = ohbot.HEADTURN    # 1  yaw: low = its right, high = its left
-EYETURN = ohbot.EYETURN      # 2  eye yaw
-LIDBLINK = ohbot.LIDBLINK    # 3  10 = wide open, 0 = shut  (rest is 10)
-TOPLIP = ohbot.TOPLIP        # 4  mouth -- owned by lip sync while speaking
+HEADNOD = ohbot.HEADNOD  # 0  pitch: low = looking down
+HEADTURN = ohbot.HEADTURN  # 1  yaw: low = its right, high = its left
+EYETURN = ohbot.EYETURN  # 2  eye yaw
+LIDBLINK = ohbot.LIDBLINK  # 3  10 = wide open, 0 = shut  (rest is 10)
+TOPLIP = ohbot.TOPLIP  # 4  mouth -- owned by lip sync while speaking
 BOTTOMLIP = ohbot.BOTTOMLIP  # 5  mouth -- owned by lip sync while speaking
-EYETILT = ohbot.EYETILT      # 6  eye pitch: low = looking down
-HEADROLL = ohbot.HEADROLL    # 7  tilt: the sympathetic/quizzical head cock
+EYETILT = ohbot.EYETILT  # 6  eye pitch: low = looking down
+HEADROLL = ohbot.HEADROLL  # 7  tilt: the sympathetic/quizzical head cock
 
 # Motors that lip sync controls during speech.
 MOUTH = (TOPLIP, BOTTOMLIP)
@@ -53,38 +55,22 @@ REST = {
 
 POSES = {
     "neutral": {LIDBLINK: 10, HEADNOD: 5, EYETILT: 5, HEADROLL: 5},
-
     # Lifted head, wide-ish eyes, open mouth suggesting a smile.
-    "happy": {LIDBLINK: 9, HEADNOD: 6, EYETILT: 6, HEADROLL: 5,
-              BOTTOMLIP: 7, TOPLIP: 6},
-
+    "happy": {LIDBLINK: 9, HEADNOD: 6, EYETILT: 6, HEADROLL: 5, BOTTOMLIP: 7, TOPLIP: 6},
     # Everything drops: head, gaze and lids. The head tilt stops it reading
     # as merely "switched off".
-    "sad": {LIDBLINK: 5, HEADNOD: 3, EYETILT: 3, HEADROLL: 6,
-            BOTTOMLIP: 4, TOPLIP: 4},
-
-    "surprised": {LIDBLINK: 10, HEADNOD: 6, EYETILT: 6, HEADROLL: 5,
-                  BOTTOMLIP: 9, TOPLIP: 8},
-
+    "sad": {LIDBLINK: 5, HEADNOD: 3, EYETILT: 3, HEADROLL: 6, BOTTOMLIP: 4, TOPLIP: 4},
+    "surprised": {LIDBLINK: 10, HEADNOD: 6, EYETILT: 6, HEADROLL: 5, BOTTOMLIP: 9, TOPLIP: 8},
     # Looking up and away is the universal "I'm working on it".
     "thinking": {LIDBLINK: 7, HEADNOD: 6, EYETILT: 8, EYETURN: 7, HEADROLL: 6},
-
     # The head cock. This is the one that makes people say "aww".
     "curious": {LIDBLINK: 10, HEADNOD: 5, EYETILT: 6, HEADROLL: 8},
-
     # Softened, slightly lowered, head tilted toward you.
-    "sympathetic": {LIDBLINK: 6, HEADNOD: 4, EYETILT: 4, HEADROLL: 7,
-                    BOTTOMLIP: 5, TOPLIP: 5},
-
-    "excited": {LIDBLINK: 10, HEADNOD: 7, EYETILT: 7, HEADROLL: 5,
-                BOTTOMLIP: 8, TOPLIP: 7},
-
-    "confused": {LIDBLINK: 8, HEADNOD: 5, EYETILT: 5, HEADROLL: 3,
-                 EYETURN: 6},
-
+    "sympathetic": {LIDBLINK: 6, HEADNOD: 4, EYETILT: 4, HEADROLL: 7, BOTTOMLIP: 5, TOPLIP: 5},
+    "excited": {LIDBLINK: 10, HEADNOD: 7, EYETILT: 7, HEADROLL: 5, BOTTOMLIP: 8, TOPLIP: 7},
+    "confused": {LIDBLINK: 8, HEADNOD: 5, EYETILT: 5, HEADROLL: 3, EYETURN: 6},
     # Pulled back and slightly away, eyes wide. Pair with the "shiver" gesture.
-    "scared": {LIDBLINK: 10, HEADNOD: 3, EYETILT: 6, HEADROLL: 6,
-               BOTTOMLIP: 7, TOPLIP: 6},
+    "scared": {LIDBLINK: 10, HEADNOD: 3, EYETILT: 6, HEADROLL: 6, BOTTOMLIP: 7, TOPLIP: 6},
 }
 
 # Axes that aim the face at the person. A pose may leave these off-centre for
@@ -107,7 +93,6 @@ GESTURES = {
         (HEADNOD, 3, 8, 0.22),
         (HEADNOD, 5, 6, 0.20),
     ],
-
     # Deliberately slow and shallow -- a brisk nod reads as agreement,
     # a slow one reads as sympathy.
     "slow_nod": [
@@ -116,19 +101,16 @@ GESTURES = {
         (HEADNOD, 4, 2, 0.60),
         (HEADNOD, 5, 2, 0.40),
     ],
-
     "shake": [
         (HEADTURN, 3, 8, 0.20),
         (HEADTURN, 7, 8, 0.24),
         (HEADTURN, 3, 8, 0.24),
         (HEADTURN, 5, 6, 0.20),
     ],
-
     "tilt": [
         (HEADROLL, 8, 3, 0.60),
         (HEADROLL, 5, 3, 0.30),
     ],
-
     # Glance away, then snap back with wide eyes.
     "double_take": [
         (HEADTURN, 7, 7, 0.30),
@@ -137,36 +119,39 @@ GESTURES = {
         (LIDBLINK, 10, 10, 0.30),
         (HEADTURN, 5, 6, 0.20),
     ],
-
     "lean_in": [
         (HEADNOD, 7, 3, 0.50),
         (LIDBLINK, 10, 6, 0.40),
     ],
-
     "perk_up": [
         (LIDBLINK, 10, 10, 0.10),
         (HEADNOD, 7, 8, 0.25),
         (HEADROLL, 6, 6, 0.25),
         (HEADNOD, 5, 5, 0.15),
-        (HEADROLL, 5, 6, 0.15),   # return the roll, or it leaks into the next line
+        (HEADROLL, 5, 6, 0.15),  # return the roll, or it leaks into the next line
     ],
-
     # Fast, small, irregular -- a tremble, not a shake. Amplitude stays within
     # one unit of centre: big movements read as "shaking the head no", small
     # rapid ones read as fear. Eyes dart as well as the head, which is what
     # sells it; a head-only tremble looks like a loose servo.
     "shiver": [
         (LIDBLINK, 10, 10, 0.05),
-        (HEADROLL, 4, 10, 0.06), (EYETURN, 6, 10, 0.05),
-        (HEADROLL, 6, 10, 0.06), (EYETURN, 4, 10, 0.05),
-        (HEADROLL, 4, 10, 0.06), (HEADTURN, 6, 10, 0.05),
-        (HEADROLL, 6, 10, 0.06), (HEADTURN, 4, 10, 0.05),
-        (HEADROLL, 4, 10, 0.06), (EYETURN, 6, 10, 0.05),
-        (HEADROLL, 6, 10, 0.06), (EYETURN, 4, 10, 0.05),
-        (HEADROLL, 5, 8, 0.08), (HEADTURN, 5, 8, 0.06),
+        (HEADROLL, 4, 10, 0.06),
+        (EYETURN, 6, 10, 0.05),
+        (HEADROLL, 6, 10, 0.06),
+        (EYETURN, 4, 10, 0.05),
+        (HEADROLL, 4, 10, 0.06),
+        (HEADTURN, 6, 10, 0.05),
+        (HEADROLL, 6, 10, 0.06),
+        (HEADTURN, 4, 10, 0.05),
+        (HEADROLL, 4, 10, 0.06),
+        (EYETURN, 6, 10, 0.05),
+        (HEADROLL, 6, 10, 0.06),
+        (EYETURN, 4, 10, 0.05),
+        (HEADROLL, 5, 8, 0.08),
+        (HEADTURN, 5, 8, 0.06),
         (EYETURN, 5, 8, 0.10),
     ],
-
     # A flinch: snap back and away, hold, then edge cautiously forward again.
     "recoil": [
         (LIDBLINK, 10, 10, 0.04),
@@ -177,19 +162,16 @@ GESTURES = {
         (HEADNOD, 5, 2, 0.25),
         (HEADROLL, 5, 3, 0.20),
     ],
-
     "look_away": [
         (EYETURN, 8, 5, 0.35),
         (HEADTURN, 6, 3, 0.50),
         (EYETURN, 5, 4, 0.30),
         (HEADTURN, 5, 3, 0.30),
     ],
-
     "blink": [
         (LIDBLINK, 0, 10, 0.10),
         (LIDBLINK, 10, 10, 0.05),
     ],
-
     "double_blink": [
         (LIDBLINK, 0, 10, 0.09),
         (LIDBLINK, 10, 10, 0.09),
@@ -224,15 +206,15 @@ EMOTIONS = sorted(POSES)
 GESTURE_NAMES = sorted(GESTURES)
 
 
-def gesture_menu():
-    """"name (meaning)" lines for the prompt, so choices are made on meaning."""
+def gesture_menu() -> str:
+    """ "name (meaning)" lines for the prompt, so choices are made on meaning."""
     return "\n".join(
         "- {}: {}".format(name, GESTURE_MEANINGS.get(name, "no description"))
         for name in GESTURE_NAMES
     )
 
 
-def gaze_positions(x=5, y=5):
+def gaze_positions(x: float = 5, y: float = 5) -> dict[int, float]:
     """Eye targets for a gaze direction. x: 0 right .. 10 left, y: 0 down .. 10 up."""
     return {EYETURN: x, EYETILT: y}
 
@@ -258,7 +240,12 @@ LOOK_DIRECTIONS = {
 HEAD_FOLLOW = 0.55
 
 
-def look_targets(x=5, y=5, with_head=True, head_follow=HEAD_FOLLOW):
+def look_targets(
+    x: float = 5,
+    y: float = 5,
+    with_head: bool = True,
+    head_follow: float = HEAD_FOLLOW,
+) -> tuple[dict[int, float], dict[int, float]]:
     """Motor targets for looking somewhere with eyes, head yaw, pitch and roll.
 
     Returns (eye_targets, head_targets) so the caller can move the eyes first
@@ -269,7 +256,7 @@ def look_targets(x=5, y=5, with_head=True, head_follow=HEAD_FOLLOW):
     if not with_head:
         return eyes, {}
 
-    def follow(value):
+    def follow(value: float) -> float:
         return 5 + (value - 5) * head_follow
 
     head = {

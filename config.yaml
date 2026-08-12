@@ -39,6 +39,19 @@ speech_to_text:
   min_speech_seconds: 0.3 # shorter than this is treated as a cough, not speech
   noise_multiplier: 3.0   # speech must be this much louder than the room
 
+  # The next two only apply on a call (examples/10_teams_call.py), where the
+  # input is a virtual cable rather than a microphone. See docs/TEAMS.md.
+  #
+  # channels: "all" mixes down every channel the device offers, which an
+  # Aggregate Device needs -- "BlackHole + built-in mic" is how the robot hears
+  # the call AND you, and reading one channel drops one of the two silently.
+  channels: all
+  # capture_rate: "device" records at whatever the device runs at (BlackHole is
+  # 48 kHz) and resamples to the 16 kHz Whisper wants. Pinning this to 16000
+  # can make CoreAudio renegotiate the device down, which breaks every
+  # Multi-Output it belongs to -- their members must agree on a rate.
+  capture_rate: device
+
 robot:
   idle: true              # blink and drift so it doesn't look crashed
   blink_interval: [2, 6]  # random seconds between blinks

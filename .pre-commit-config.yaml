@@ -1,0 +1,33 @@
+# Runs the same checks as CI, before each commit.
+#
+#     pip install -r requirements-dev.txt
+#     pre-commit install
+#
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.5
+    hooks:
+      - id: ruff-format
+      - id: ruff
+        args: [--fix]
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.19.1
+    hooks:
+      - id: mypy
+        files: ^ohbot_kit/
+        # call.py is work in progress; see pyproject.toml
+        exclude: ^ohbot_kit/call\.py$
+        additional_dependencies: [types-PyYAML]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-merge-conflict
+      # Model files are hundreds of megabytes and are git-ignored; this is the
+      # backstop if someone force-adds one.
+      - id: check-added-large-files
+        args: [--maxkb=2000]

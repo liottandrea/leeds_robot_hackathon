@@ -15,10 +15,8 @@ Requires Ollama running locally (`ollama serve`) and the Ohbot plugged in.
 import argparse
 import sys
 
-from ohbot_kit import audio
+from ohbot_kit import audio, llm, tts
 from ohbot_kit import config as config_mod
-from ohbot_kit import llm
-from ohbot_kit import tts
 from ohbot_kit.robot import Ohbot
 
 BANNER = """Ohbot chat -- model: {model}, voice: {engine}, persona: {persona}
@@ -65,7 +63,7 @@ def respond(bot, convo, text, max_sentences):
             bot.speak(sentence)
             said_anything = True
     except llm.OllamaError as e:
-        print("\n[llm error] {}".format(e), file=sys.stderr)
+        print(f"\n[llm error] {e}", file=sys.stderr)
         bot.speak("Sorry, my brain is not responding.")
     finally:
         print()
@@ -148,11 +146,7 @@ def main():
     # Voice precedence: --voice-name > the persona's own voice > tts.voice >
     # built-in default. The persona beats the global setting because choosing a
     # character is a more specific intent than setting a default voice.
-    voice_name = (
-        args.voice_name
-        or persona.get("voice")
-        or cfg.get("tts.voice", tts.DEFAULT_VOICE)
-    )
+    voice_name = args.voice_name or persona.get("voice") or cfg.get("tts.voice", tts.DEFAULT_VOICE)
 
     engine = "say"
     if engine_name == "kokoro":
@@ -163,11 +157,11 @@ def main():
                     speed=pick(args.speed, cfg, "tts.speed", tts.DEFAULT_SPEED),
                 )
             )
-            engine = "kokoro ({})".format(voice_name)
+            engine = f"kokoro ({voice_name})"
         except Exception as e:
             # Deliberately broad: missing model files, a failed ONNX load and a
             # misplaced espeak-ng data dir all mean the same thing here.
-            print("[tts] Kokoro unavailable, using macOS say: {}".format(e), file=sys.stderr)
+            print(f"[tts] Kokoro unavailable, using macOS say: {e}", file=sys.stderr)
 
     if args.voice:
         from ohbot_kit import voice  # imported lazily: heavy deps, only needed with --voice
@@ -179,9 +173,7 @@ def main():
             min_speech_seconds=cfg.get(
                 "speech_to_text.min_speech_seconds", voice.MIN_SPEECH_SECONDS
             ),
-            noise_multiplier=cfg.get(
-                "speech_to_text.noise_multiplier", voice.NOISE_MULTIPLIER
-            ),
+            noise_multiplier=cfg.get("speech_to_text.noise_multiplier", voice.NOISE_MULTIPLIER),
         )
         source = lambda bot: listener.listen_loop(bot)  # noqa: E731
         # An empty tuple in typed mode, so the handler below is safe either way.
@@ -224,13 +216,13 @@ def main():
                     print("[context cleared]")
                     continue
                 if args.voice:
-                    print("You: {}".format(text))
+                    print(f"You: {text}")
 
                 respond(bot, convo, text, max_sentences)
         except KeyboardInterrupt:
             print()
         except mic_errors as e:
-            print("\n[microphone] {}".format(e), file=sys.stderr)
+            print(f"\n[microphone] {e}", file=sys.stderr)
             bot.speak("I cannot hear anything. Check my microphone permission.")
 
         bot.speak("Goodbye!")

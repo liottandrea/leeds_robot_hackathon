@@ -1,0 +1,34 @@
+Ohbot Hackathon Kit
+Copyright 2026 UST
+
+This product includes software developed at UST.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at http://www.apache.org/licenses/LICENSE-2.0
+
+---------------------------------------------------------------------------
+Third-party components
+---------------------------------------------------------------------------
+
+This project depends on, but does not redistribute, the following. Each is
+governed by its own licence, which is not superseded by the licence above.
+
+  ohbot            Ohbot Ltd -- the robot control library
+                   https://github.com/ohbot/ohbot-python
+
+  Kokoro-82M       Apache License 2.0 -- the speech model
+                   https://huggingface.co/hexgrad/Kokoro-82M
+
+  kokoro-onnx      MIT License -- the ONNX runtime wrapper
+                   https://github.com/thewh1teagle/kokoro-onnx
+
+  faster-whisper   MIT License -- speech recognition
+                   https://github.com/SYSTRAN/faster-whisper
+
+  Ollama models    Each model carries its own licence. phi4-mini is published
+                   by Microsoft under the MIT License; check the licence of any
+                   model you substitute.
+
+Model weights are downloaded at setup time and are not included in this
+repository.

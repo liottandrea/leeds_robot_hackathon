@@ -18,8 +18,13 @@ relative to the working directory, so running from elsewhere silently creates a
 second, uncalibrated copy.
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 from . import audio, config, expression, llm, serial_safe, tts
-from .config import Config, load as load_config
+from .config import Config
+from .config import load as load_config
 from .expression import EMOTIONS, GESTURE_NAMES, GESTURES, LOOK_DIRECTIONS, POSES
 from .llm import Conversation, OllamaError
 from .robot import Ohbot
@@ -48,7 +53,12 @@ __all__ = [
 ]
 
 
-def setup(model=None, persona=None, voice_name=None, config_path="config.yaml"):
+def setup(
+    model: str | None = None,
+    persona: str | None = None,
+    voice_name: str | None = None,
+    config_path: str = "config.yaml",
+) -> tuple[Config, Conversation, dict[str, Any]]:
     """Do the boilerplate: load config, wire audio and speech, build the LLM.
 
     Returns (cfg, conversation, robot_kwargs). Pass robot_kwargs straight into
@@ -69,7 +79,7 @@ def setup(model=None, persona=None, voice_name=None, config_path="config.yaml"):
     try:
         audio.install_output(audio.resolve(cfg.get("audio.output_device"), audio.OUTPUT))
     except audio.DeviceNotFound as e:
-        print("[audio] {}".format(e))
+        print(f"[audio] {e}")
 
     # Kokoro sounds better and is faster than macOS `say`, but a missing model
     # file should degrade the demo, not stop it.
@@ -83,7 +93,7 @@ def setup(model=None, persona=None, voice_name=None, config_path="config.yaml"):
                 )
             )
         except Exception as e:
-            print("[tts] using macOS say: {}".format(e))
+            print(f"[tts] using macOS say: {e}")
 
     conversation = llm.Conversation(
         model=chat_model,
@@ -103,7 +113,7 @@ def setup(model=None, persona=None, voice_name=None, config_path="config.yaml"):
     return cfg, conversation, robot_kwargs
 
 
-def make_listener(cfg):
+def make_listener(cfg: Config) -> Any:
     """Build a microphone listener from config. Imported lazily -- the speech
     model is heavy and only needed when you actually want voice input."""
     from . import voice
@@ -112,10 +122,6 @@ def make_listener(cfg):
         device=audio.resolve(cfg.get("audio.input_device"), audio.INPUT),
         model_size=cfg.get("speech_to_text.model", voice.MODEL_SIZE),
         silence_seconds=cfg.get("speech_to_text.silence_seconds", voice.SILENCE_SECONDS),
-        min_speech_seconds=cfg.get(
-            "speech_to_text.min_speech_seconds", voice.MIN_SPEECH_SECONDS
-        ),
-        noise_multiplier=cfg.get(
-            "speech_to_text.noise_multiplier", voice.NOISE_MULTIPLIER
-        ),
+        min_speech_seconds=cfg.get("speech_to_text.min_speech_seconds", voice.MIN_SPEECH_SECONDS),
+        noise_multiplier=cfg.get("speech_to_text.noise_multiplier", voice.NOISE_MULTIPLIER),
     )

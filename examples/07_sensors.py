@@ -19,13 +19,13 @@ import _bootstrap  # noqa: F401
 
 from ohbot_kit import Ohbot, setup
 
-SENSOR = 0          # pin number
-NEAR = 5.0          # tune this: print the readings first and pick a threshold
+SENSOR = 0  # pin number
+NEAR = 5.0  # tune this: print the readings first and pick a threshold
 POLL = 0.2
 
 cfg, _convo, robot_kwargs = setup()
 
-print("Reading sensor {} -- wave your hand in front of it. Ctrl-C to stop.\n".format(SENSOR))
+print(f"Reading sensor {SENSOR} -- wave your hand in front of it. Ctrl-C to stop.\n")
 
 with Ohbot(**robot_kwargs) as bot:
     was_near = False
@@ -33,8 +33,11 @@ with Ohbot(**robot_kwargs) as bot:
         while True:
             value = bot.read_sensor(SENSOR)
             is_near = value > NEAR
-            print("\r  sensor {} = {:5.2f}  {}".format(
-                SENSOR, value, "NEAR" if is_near else "    "), end="", flush=True)
+            print(
+                "\r  sensor {} = {:5.2f}  {}".format(SENSOR, value, "NEAR" if is_near else "    "),
+                end="",
+                flush=True,
+            )
 
             # Only react on the transition, or it greets you continuously.
             if is_near and not was_near:
