@@ -37,6 +37,63 @@ fade the eyes, and sweep the head and eyelids.
 > Run scripts **from the project root**. The library resolves `ohbotData/` relative to the
 > working directory, so running from a subfolder silently creates a second, uncalibrated copy.
 
+## Chatbot
+
+Hold a spoken conversation with the robot, powered by a local
+[Ollama](https://ollama.com/) model. Nothing leaves the machine.
+
+```bash
+ollama serve                 # in another terminal, if not already running
+ollama pull phi4-mini        # 2.5 GB
+
+python ohbot_chat.py                      # type, robot speaks back
+python ohbot_chat.py --voice              # speak, robot speaks back
+python ohbot_chat.py --model qwen3.6:35b  # use a different model
+python ohbot_chat.py --no-idle            # stop the blinking and drift
+```
+
+Commands at the prompt: `/reset` forgets the conversation, `/quit` exits.
+
+Eye colour tells you what it's doing: **blue** listening, **amber** thinking
+(pulsing), **green** speaking.
+
+| Module | Role |
+| --- | --- |
+| `llm.py` | Ollama streaming client, sentence splitter, TTS sanitiser |
+| `robot.py` | Speech, idle motion, eye-colour state, guaranteed `close()` |
+| `voice.py` | Mic capture + local Whisper transcription (only with `--voice`) |
+| `ohbot_chat.py` | The chat loop |
+
+### Why it's built this way
+
+Three things about the hardware drive the design, and are worth knowing before you change it:
+
+**Replies are capped at 3 sentences, in code.** `ohbot.say()` synthesizes the *whole* string to a
+WAV before any lip movement starts, so latency scales with length. A long reply means a long
+freeze, then a monologue you can't interrupt. The system prompt asks for brevity, but small models
+ignore it — so `llm.MAX_SENTENCES` enforces it regardless. Raise it with `--max-sentences` if you
+want longer answers.
+
+**Replies are streamed sentence by sentence.** A producer thread reads from Ollama while the main
+thread speaks, so the robot starts talking after sentence one rather than after the whole response.
+
+**Idle motion stops during speech — this is not optional.** The library's `_serwrite()` guards
+concurrent writes only on Windows and Linux; on macOS there is *no* guard. `say()` meanwhile spawns
+its own threads to drive the lip motor. Idle motion running during speech would interleave bytes on
+an unguarded serial port and corrupt motor commands. `robot.py` gates every idle write behind an
+event that `speak()` clears.
+
+### Voice mode
+
+Uses `faster-whisper` (`base.en`, ~150 MB, downloaded on first run) with silence-triggered capture.
+Listening is suspended while the robot talks, so it doesn't transcribe its own voice.
+
+macOS will need microphone permission: **System Settings → Privacy & Security → Microphone**, enable
+your terminal app, then restart it. If the mic returns silence, the program says so and exits
+instead of hanging. Test the mic alone with `python voice.py`.
+
+A headset is worth using for demos — it stops the robot hearing itself even without the gating.
+
 ## Writing your own
 
 ```python
@@ -57,7 +114,7 @@ attached, buzzing and drawing current until you replug.
 ### Motors
 
 | Index | Constant | Moves |
-|---|---|---|
+| --- | --- | --- |
 | 0 | `HEADNOD` | Head up/down |
 | 1 | `HEADTURN` | Head left/right |
 | 2 | `EYETURN` | Eyes left/right |
@@ -70,7 +127,7 @@ Index 4 is unused. Address motors by constant or by number.
 ### Other API
 
 | Call | Notes |
-|---|---|
+| --- | --- |
 | `wait(seconds)` | int or float; use between consecutive commands to the same motor |
 | `readSensor(pin)` | pin 0–6, returns float 0–10 |
 | `playSound(name)` | omit the `.wav`; presets: fanfare, loop, ohbot, smash, spring |
@@ -81,7 +138,7 @@ Index 4 is unused. Address motors by constant or by number.
 ## Project layout
 
 | Path | Purpose |
-|---|---|
+| --- | --- |
 | `check_port.py` | Serial diagnostic — probes ports without importing ohbot |
 | `helloworldohbot.py` | Movement + speech demo |
 | `requirements.txt` | Pinned dependency set |
@@ -117,7 +174,7 @@ attached. Run `python -c "from ohbot import ohbot; ohbot.close()"` or replug.
 The vendor's macOS instructions predate the current hardware and Python packaging rules:
 
 | Guide says | Reality | Why it breaks |
-|---|---|---|
+| --- | --- | --- |
 | Install newest Python from python.org | Ohbot is verified for **3.6–3.11** only | Newer interpreters are untested; deps may lack wheels |
 | `sudo pip3 install ohbot` | Homebrew Python is PEP 668 externally-managed | pip refuses; `sudo` would pollute system site-packages |
 | USB Y-cable + 5V 1A adaptor | Current Ohbrain is USB-C | Obsolete for this hardware; USB-C alone powers it |
