@@ -12,6 +12,7 @@ Exits non-zero if anything critical failed.
 
 import argparse
 import os
+import platform
 import sys
 import time
 
@@ -77,7 +78,10 @@ def check_robot():
 
     found = None
     for p in serial.tools.list_ports.comports():
-        if "usb" not in p.device:
+        # Only macOS names its ports with "usb"; Windows uses COM3, so
+        # applying this filter everywhere would skip every port and report
+        # "no Ohbot" on a perfectly working Windows machine.
+        if platform.system() == "Darwin" and "usb" not in p.device:
             continue
         try:
             with serial.Serial(p.device, 19200, timeout=0.5, write_timeout=0.5) as ser:

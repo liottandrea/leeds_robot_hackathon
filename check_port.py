@@ -5,11 +5,23 @@ reply containing v1 or v2) but without importing ohbot, which would trigger
 motor init and audio playback as a side effect.
 """
 
+import platform
+
 import serial
 import serial.tools.list_ports
 
 BAUD = 19200
 TIMEOUT = 0.5
+
+
+def worth_probing(device):
+    """Mirror the ohbot library's own port filter.
+
+    It only requires "usb" in the device name on macOS. Windows ports are
+    named COM3, so applying that filter everywhere would skip every port and
+    report "no Ohbot" on a perfectly working Windows machine.
+    """
+    return platform.system() != "Darwin" or "usb" in device
 
 
 def probe(device):
@@ -35,11 +47,10 @@ for p in ports:
     print("  {}  ({})".format(p.device, p.description))
 
 found = []
-print("\nProbing usb ports:")
+print("\nProbing ports:")
 for p in ports:
-    # The ohbot library only probes ports whose name contains "usb" on macOS.
-    if "usb" not in p.device:
-        print("  {}  skipped (no 'usb' in name)".format(p.device))
+    if not worth_probing(p.device):
+        print("  {}  skipped (macOS: no 'usb' in name)".format(p.device))
         continue
 
     print("  {}  ...".format(p.device))

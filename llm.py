@@ -223,6 +223,80 @@ class Conversation:
             self.messages.pop()  # nothing came back; don't poison the history
 
 
+    # -- structured "act as you speak" mode --------------------------------
+
+    def respond_with_action(self, user_text, emotions, gestures):
+        """Get a reply plus the emotion and gesture to perform with it.
+
+        Uses Ollama's `format` JSON-schema mode rather than the tools API.
+        phi4-mini advertises a `tools` capability but returned tool_calls: None
+        on every attempt and refused outright ("I'm unable to set a real-world
+        object's emotional state"). Schema-constrained output parsed 3/3 first
+        time, in 0.5-0.7s.
+
+        Returns a dict: {say, emotion, gesture, gaze_x, gaze_y}.
+        """
+        schema = {
+            "type": "object",
+            "properties": {
+                "say": {"type": "string"},
+                "emotion": {"type": "string", "enum": list(emotions)},
+                "gesture": {"type": "string", "enum": list(gestures)},
+                "gaze_x": {"type": "integer"},
+                "gaze_y": {"type": "integer"},
+            },
+            "required": ["say", "emotion", "gesture"],
+        }
+
+        self.messages.append({"role": "user", "content": user_text})
+        system = self.system + ACTION_SUFFIX.format(
+            emotions=", ".join(emotions), gestures=", ".join(gestures)
+        )
+
+        try:
+            r = requests.post(
+                "{}/api/chat".format(self.host),
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "system", "content": system}] + self.messages,
+                    "stream": False,
+                    "format": schema,
+                    "options": {
+                        "temperature": self.temperature,
+                        "num_predict": self.num_predict,
+                    },
+                },
+                timeout=TIMEOUT,
+            )
+            r.raise_for_status()
+            content = r.json().get("message", {}).get("content", "")
+            action = json.loads(content)
+        except (requests.RequestException, ValueError) as e:
+            self.messages.pop()
+            raise OllamaError("Structured request failed: {}".format(e)) from e
+
+        action["say"] = sanitise(action.get("say", ""))
+        if action["say"]:
+            self.messages.append({"role": "assistant", "content": action["say"]})
+        else:
+            self.messages.pop()
+        return action
+
+
+# Appended to the persona prompt in action mode. Kept separate so personas
+# stay readable and don't each have to repeat the movement instructions.
+ACTION_SUFFIX = """
+
+You also control your own face and body. With every reply choose:
+- emotion: one of {emotions}
+- gesture: one of {gestures}
+- gaze_x (0 = your right, 5 = ahead, 10 = your left) and gaze_y (0 = down, 10 = up)
+
+Match them to the meaning. If someone shares bad news, be sympathetic and nod
+slowly rather than cheerful. If something is surprising, look surprised. Prefer
+subtle choices; constant big gestures read as twitchy, not expressive."""
+
+
 def chat_once(prompt, model=DEFAULT_MODEL):
     """One-shot helper for testing the LLM path without the robot attached."""
     return " ".join(Conversation(model).stream_sentences(prompt))

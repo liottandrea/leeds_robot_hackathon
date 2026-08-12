@@ -204,16 +204,37 @@ attached, buzzing and drawing current until you replug.
 
 ### Motors
 
-| Index | Constant | Moves |
-| --- | --- | --- |
-| 0 | `HEADNOD` | Head up/down |
-| 1 | `HEADTURN` | Head left/right |
-| 2 | `EYETURN` | Eyes left/right |
-| 3 | `LIDBLINK` | Eyelids |
-| 5 | `BOTTOMLIP` | Lower lip |
-| 6 | `EYETILT` | Eyes up/down |
+All eight exist. The vendor's own docs table omits `TOPLIP` and `HEADROLL`, but both are real —
+`HEADROLL` in particular gives you the sympathetic head tilt.
 
-Index 4 is unused. Address motors by constant or by number.
+| Index | Constant | Moves | Notes |
+| --- | --- | --- | --- |
+| 0 | `HEADNOD` | Head up/down | |
+| 1 | `HEADTURN` | Head left/right | |
+| 2 | `EYETURN` | Eyes left/right | |
+| 3 | `LIDBLINK` | Eyelids | **10 = open, 0 = shut**; rest is 10, not 5 |
+| 4 | `TOPLIP` | Upper lip | driven by lip sync while speaking |
+| 5 | `BOTTOMLIP` | Lower lip | driven by lip sync while speaking |
+| 6 | `EYETILT` | Eyes up/down | |
+| 7 | `HEADROLL` | Head tilt | not in the vendor docs; may not be fitted on every unit |
+
+Positions are 0–10 and are clamped to each robot's calibrated range from
+`ohbotData/MotorDefinitionsv21.omd`, so you cannot drive a servo past its limits.
+
+### Expression and gesture
+
+`expression.py` holds the vocabulary; `robot.py` plays it:
+
+```python
+bot.express("sympathetic")   # hold a face  (see expression.POSES)
+bot.gesture("slow_nod")      # movement that plays UNDER speech
+bot.gaze(x=3, y=7)           # eyes only: 0 right/down .. 10 left/up
+bot.listening(True)          # nod and blink while the user talks
+bot.speak("I'm sorry.", emotion="sympathetic", gesture="slow_nod")
+```
+
+Adding an entry to `POSES` or `GESTURES` automatically makes it a choice the LLM can pick — the
+JSON schema is built from those tables.
 
 ### Other API
 

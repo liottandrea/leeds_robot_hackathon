@@ -1,0 +1,171 @@
+"""The empathy layer: poses, gestures and gaze.
+
+This is the vocabulary you remix. A pose is a held facial expression; a gesture
+is a timed sequence that plays out; gaze aims the eyes independently of the head.
+
+    from expression import POSES, GESTURES
+    bot.express("sympathetic")     # hold a face
+    bot.gesture("slow_nod")        # play a movement, underneath speech
+    bot.gaze(x=3, y=7)             # look up and to the left
+
+MOUTH OWNERSHIP -- the one rule that matters:
+
+While the robot is speaking, the lip-sync thread owns TOPLIP and BOTTOMLIP. A
+pose that also sets the mouth would fight it and produce mush. So every mouth
+value here is applied ONLY when not speaking; robot.py enforces this. Change a
+pose's mouth freely, but don't remove that guard.
+
+All positions are 0-10. The library clamps them to each robot's calibrated
+range from ohbotData/MotorDefinitionsv21.omd, so you cannot drive a servo past
+its limits by choosing a silly number here.
+"""
+
+from ohbot import ohbot
+
+# Motor numbers, named for readability. All eight exist -- note that TOPLIP (4)
+# and HEADROLL (7) are real despite being absent from the vendor's docs table.
+HEADNOD = ohbot.HEADNOD      # 0  pitch: low = looking down
+HEADTURN = ohbot.HEADTURN    # 1  yaw: low = its right, high = its left
+EYETURN = ohbot.EYETURN      # 2  eye yaw
+LIDBLINK = ohbot.LIDBLINK    # 3  10 = wide open, 0 = shut  (rest is 10)
+TOPLIP = ohbot.TOPLIP        # 4  mouth -- owned by lip sync while speaking
+BOTTOMLIP = ohbot.BOTTOMLIP  # 5  mouth -- owned by lip sync while speaking
+EYETILT = ohbot.EYETILT      # 6  eye pitch: low = looking down
+HEADROLL = ohbot.HEADROLL    # 7  tilt: the sympathetic/quizzical head cock
+
+# Motors that lip sync controls during speech.
+MOUTH = (TOPLIP, BOTTOMLIP)
+
+# Neutral resting position. LIDBLINK rests at 10 (open) -- resting it at 5
+# leaves the robot permanently half-lidded and looking half asleep.
+REST = {
+    HEADNOD: 5,
+    HEADTURN: 5,
+    EYETURN: 5,
+    LIDBLINK: 10,
+    EYETILT: 5,
+    HEADROLL: 5,
+}
+
+# -- poses ----------------------------------------------------------------
+# A held expression. Anything omitted keeps its current position, so poses
+# compose with whatever gaze you've set.
+
+POSES = {
+    "neutral": {LIDBLINK: 10, HEADNOD: 5, EYETILT: 5, HEADROLL: 5},
+
+    # Lifted head, wide-ish eyes, open mouth suggesting a smile.
+    "happy": {LIDBLINK: 9, HEADNOD: 6, EYETILT: 6, HEADROLL: 5,
+              BOTTOMLIP: 7, TOPLIP: 6},
+
+    # Everything drops: head, gaze and lids. The head tilt stops it reading
+    # as merely "switched off".
+    "sad": {LIDBLINK: 5, HEADNOD: 3, EYETILT: 3, HEADROLL: 6,
+            BOTTOMLIP: 4, TOPLIP: 4},
+
+    "surprised": {LIDBLINK: 10, HEADNOD: 6, EYETILT: 6, HEADROLL: 5,
+                  BOTTOMLIP: 9, TOPLIP: 8},
+
+    # Looking up and away is the universal "I'm working on it".
+    "thinking": {LIDBLINK: 7, HEADNOD: 6, EYETILT: 8, EYETURN: 7, HEADROLL: 6},
+
+    # The head cock. This is the one that makes people say "aww".
+    "curious": {LIDBLINK: 10, HEADNOD: 5, EYETILT: 6, HEADROLL: 8},
+
+    # Softened, slightly lowered, head tilted toward you.
+    "sympathetic": {LIDBLINK: 6, HEADNOD: 4, EYETILT: 4, HEADROLL: 7,
+                    BOTTOMLIP: 5, TOPLIP: 5},
+
+    "excited": {LIDBLINK: 10, HEADNOD: 7, EYETILT: 7, HEADROLL: 5,
+                BOTTOMLIP: 8, TOPLIP: 7},
+
+    "confused": {LIDBLINK: 8, HEADNOD: 5, EYETILT: 5, HEADROLL: 3,
+                 EYETURN: 6},
+}
+
+# -- gestures -------------------------------------------------------------
+# Keyframes: (motor, position, speed, hold_seconds). Speed is 0-10, where 10
+# is fastest. hold_seconds is how long to wait before the next keyframe.
+#
+# Gestures run on a thread so they play UNDERNEATH speech -- that simultaneity
+# is what separates "expressive robot" from "talking statue".
+
+GESTURES = {
+    "nod": [
+        (HEADNOD, 3, 8, 0.22),
+        (HEADNOD, 6, 8, 0.22),
+        (HEADNOD, 3, 8, 0.22),
+        (HEADNOD, 5, 6, 0.20),
+    ],
+
+    # Deliberately slow and shallow -- a brisk nod reads as agreement,
+    # a slow one reads as sympathy.
+    "slow_nod": [
+        (HEADNOD, 4, 2, 0.60),
+        (HEADNOD, 5, 2, 0.60),
+        (HEADNOD, 4, 2, 0.60),
+        (HEADNOD, 5, 2, 0.40),
+    ],
+
+    "shake": [
+        (HEADTURN, 3, 8, 0.20),
+        (HEADTURN, 7, 8, 0.24),
+        (HEADTURN, 3, 8, 0.24),
+        (HEADTURN, 5, 6, 0.20),
+    ],
+
+    "tilt": [
+        (HEADROLL, 8, 3, 0.60),
+        (HEADROLL, 5, 3, 0.30),
+    ],
+
+    # Glance away, then snap back with wide eyes.
+    "double_take": [
+        (HEADTURN, 7, 7, 0.30),
+        (LIDBLINK, 6, 10, 0.15),
+        (HEADTURN, 4, 10, 0.15),
+        (LIDBLINK, 10, 10, 0.30),
+        (HEADTURN, 5, 6, 0.20),
+    ],
+
+    "lean_in": [
+        (HEADNOD, 7, 3, 0.50),
+        (LIDBLINK, 10, 6, 0.40),
+    ],
+
+    "perk_up": [
+        (LIDBLINK, 10, 10, 0.10),
+        (HEADNOD, 7, 8, 0.25),
+        (HEADROLL, 6, 6, 0.25),
+        (HEADNOD, 5, 5, 0.20),
+    ],
+
+    "look_away": [
+        (EYETURN, 8, 5, 0.35),
+        (HEADTURN, 6, 3, 0.50),
+        (EYETURN, 5, 4, 0.30),
+        (HEADTURN, 5, 3, 0.30),
+    ],
+
+    "blink": [
+        (LIDBLINK, 0, 10, 0.10),
+        (LIDBLINK, 10, 10, 0.05),
+    ],
+
+    "double_blink": [
+        (LIDBLINK, 0, 10, 0.09),
+        (LIDBLINK, 10, 10, 0.09),
+        (LIDBLINK, 0, 10, 0.09),
+        (LIDBLINK, 10, 10, 0.05),
+    ],
+}
+
+# Emotions the LLM is allowed to pick. Kept in one place so the JSON schema and
+# the pose table can never drift apart.
+EMOTIONS = sorted(POSES)
+GESTURE_NAMES = sorted(GESTURES)
+
+
+def gaze_positions(x=5, y=5):
+    """Eye targets for a gaze direction. x: 0 right .. 10 left, y: 0 down .. 10 up."""
+    return {EYETURN: x, EYETILT: y}

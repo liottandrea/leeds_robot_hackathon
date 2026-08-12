@@ -1,24 +1,34 @@
-"""Robot wrapper for the Ohbot chatbot.
+"""Robot wrapper: speech, expression, gesture and gaze.
 
-Owns idle motion and eye-colour state signalling so the chat loop stays readable,
-and guarantees close() runs so the motors never sit attached and buzzing.
+    with Ohbot() as bot:
+        bot.express("sympathetic")      # hold a face
+        bot.gesture("slow_nod")         # movement that plays under speech
+        bot.speak("I'm sorry to hear that.")
 
-THREAD SAFETY -- the reason this wrapper exists:
+TWO RULES THIS FILE ENFORCES
 
-The ohbot library's _serwrite() serialises concurrent writes with a `writing`
-flag only on Windows and Linux; on macOS there is no guard at all. Meanwhile
-say() spawns its own threads to drive the lip motor while audio plays. So any
-idle motion running during speech would interleave raw bytes with the lip-sync
-stream on an unguarded serial port and corrupt motor commands.
+1. Serial writes are locked. ohbot._serwrite has no concurrency guard on macOS,
+   and say() drives the lip motor from its own thread. serial_safe wraps it in
+   a lock so gestures can run WHILE speaking without corrupting commands.
+   That simultaneity is the whole point -- a robot that freezes while talking
+   reads as a speaker with a face, not a presence.
 
-Hence the rule enforced here: the idle thread writes only while `_idle_allowed`
-is set, and speak() clears it for the whole duration of say().
+2. The mouth belongs to lip sync while speaking. POSES may set TOPLIP and
+   BOTTOMLIP, but those values are dropped whenever speech is in progress,
+   because the lip-sync thread is already driving them.
+
+Without a robot plugged in, everything here is a safe no-op: the library guards
+its writes on `connected`, and say() still plays audio. So you can develop the
+whole conversation loop with no hardware.
 """
 
 import random
 import threading
 import time
 
+import expression as ex
+import serial_safe
+from expression import GESTURES, MOUTH, POSES, REST
 from ohbot import ohbot
 
 # Eye colours as (r, g, b), each 0-10.
@@ -29,51 +39,59 @@ COLOURS = {
     "off": (0, 0, 0),
 }
 
-REST = {"headnod": 5, "headturn": 5, "lidblink": 5}
-
 
 class Ohbot:
-    """Context manager wrapping the robot for conversational use."""
+    """Context manager wrapping the robot for expressive conversation."""
 
-    def __init__(self, idle=True, colours=None, blink_interval=(2, 6), drift_interval=(4, 9)):
+    def __init__(
+        self,
+        idle=True,
+        colours=None,
+        blink_interval=(2, 6),
+        drift_interval=(4, 9),
+        has_headroll=True,
+    ):
         self.colours = dict(COLOURS)
         if colours:
             # YAML gives lists; the ohbot calls want positional r, g, b.
             self.colours.update({k: tuple(v) for k, v in colours.items()})
         self.blink_interval = tuple(blink_interval)
         self.drift_interval = tuple(drift_interval)
+        # Not every Ohbot has the head-roll servo fitted. When absent, those
+        # keyframes are skipped rather than the gesture failing.
+        self.has_headroll = has_headroll
+
         self.state = "listening"
-        # Set while the robot is talking. voice.py reads this to avoid
-        # transcribing the robot's own speech.
+        self.emotion = "neutral"
+        # Set while talking. voice.py reads this so the mic ignores our own
+        # speech; the mouth rule below reads it too.
         self.speaking = threading.Event()
-        self._idle_allowed = threading.Event()
+        self._listening = threading.Event()
         self._stop = threading.Event()
         self._idle_thread = None
+        self._gesture_thread = None
         self._want_idle = idle
 
     # -- lifecycle ---------------------------------------------------------
 
     def __enter__(self):
+        # Must happen before any thread touches a motor.
+        serial_safe.install_write_lock()
+
         ohbot.reset()
-        for motor, pos in (
-            (ohbot.HEADNOD, REST["headnod"]),
-            (ohbot.HEADTURN, REST["headturn"]),
-            (ohbot.LIDBLINK, REST["lidblink"]),
-        ):
-            ohbot.move(motor, pos, 3)
+        self.express("neutral")
         self.set_state("listening")
 
         if self._want_idle:
-            self._idle_allowed.set()
             self._idle_thread = threading.Thread(target=self._idle_loop, daemon=True)
             self._idle_thread.start()
         return self
 
     def __exit__(self, exc_type, exc, tb):
         self._stop.set()
-        self._idle_allowed.clear()
-        if self._idle_thread is not None:
-            self._idle_thread.join(timeout=2)
+        for t in (self._idle_thread, self._gesture_thread):
+            if t is not None:
+                t.join(timeout=2)
         try:
             ohbot.setEyeColour(*self.colours["off"])
             ohbot.reset()
@@ -83,87 +101,154 @@ class Ohbot:
 
     # -- speech ------------------------------------------------------------
 
-    def speak(self, text):
-        """Say text aloud with lip sync, with idle motion suspended throughout."""
+    def speak(self, text, emotion=None, gesture=None):
+        """Say text aloud, optionally with a face and a movement under it.
+
+        The gesture is launched first and plays *during* the speech.
+        """
         if not text or not text.strip():
             return
 
-        self._idle_allowed.clear()
+        if emotion:
+            self.express(emotion)
+
         self.speaking.set()
         try:
             self.set_state("speaking")
-            ohbot.say(text)  # blocks until the audio has finished playing
+            if gesture:
+                self.gesture(gesture)  # non-blocking: runs beneath the audio
+            ohbot.say(text)  # blocks until the audio has finished
         finally:
             self.speaking.clear()
-            if self._want_idle and not self._stop.is_set():
-                self._idle_allowed.set()
 
     # -- expression --------------------------------------------------------
+
+    def express(self, emotion):
+        """Hold a facial expression from expression.POSES."""
+        pose = POSES.get(emotion)
+        if pose is None:
+            raise KeyError(
+                "Unknown emotion {!r}. Available: {}".format(
+                    emotion, ", ".join(sorted(POSES))
+                )
+            )
+        self.emotion = emotion
+        for motor, pos in pose.items():
+            self._move(motor, pos, 4)
+
+    def gaze(self, x=5, y=5, speed=6):
+        """Aim the eyes. x: 0 right .. 10 left. y: 0 down .. 10 up."""
+        for motor, pos in ex.gaze_positions(x, y).items():
+            self._move(motor, pos, speed)
+
+    def gesture(self, name, blocking=False):
+        """Play a keyframe sequence from expression.GESTURES.
+
+        Non-blocking by default so it runs underneath speech. Only one gesture
+        plays at a time; starting another lets the first finish first.
+        """
+        frames = GESTURES.get(name)
+        if frames is None:
+            raise KeyError(
+                "Unknown gesture {!r}. Available: {}".format(
+                    name, ", ".join(sorted(GESTURES))
+                )
+            )
+
+        if blocking:
+            self._play(frames)
+            return
+
+        if self._gesture_thread is not None and self._gesture_thread.is_alive():
+            self._gesture_thread.join(timeout=3)
+        self._gesture_thread = threading.Thread(
+            target=self._play, args=(frames,), daemon=True
+        )
+        self._gesture_thread.start()
+
+    def _play(self, frames):
+        for motor, pos, speed, hold in frames:
+            if self._stop.is_set():
+                return
+            self._move(motor, pos, speed)
+            time.sleep(hold)
 
     def set_state(self, state):
         """Signal listening / thinking / speaking via eye colour."""
         self.state = state
-        if self._safe_to_write():
-            ohbot.setEyeColour(*self.colours.get(state, self.colours["off"]))
+        ohbot.setEyeColour(*self.colours.get(state, self.colours["off"]))
 
-    def _safe_to_write(self):
-        """True when no speech is in progress, so serial writes won't interleave."""
-        return not self.speaking.is_set()
+    # -- listening ---------------------------------------------------------
 
-    # -- idle motion -------------------------------------------------------
+    def listening(self, on=True):
+        """Backchannel mode: nod and blink while the USER is talking.
+
+        Looking attentive while being spoken to does more for the illusion of
+        presence than anything the robot does on its own turn.
+        """
+        self.set_state("listening")
+        if on:
+            self.express("neutral")
+            self._listening.set()
+        else:
+            self._listening.clear()
+
+    # -- sensors -----------------------------------------------------------
+
+    def read_sensor(self, index):
+        """Read a sensor, safely.
+
+        The library's readSensor() calls ser.flushInput() with no guard, so it
+        raises AttributeError on None when no robot is attached. It also does
+        write-then-read, which another thread's write could land in the middle
+        of -- so the whole transaction holds the serial lock.
+        """
+        if not ohbot.connected:
+            return 0.0
+        # The lock is reentrant, so readSensor's own _serwrite won't deadlock.
+        with serial_safe.lock:
+            try:
+                return ohbot.readSensor(index)
+            except Exception:
+                return 0.0
+
+    # -- internals ---------------------------------------------------------
+
+    def _move(self, motor, pos, speed=5):
+        """Move one motor, honouring the mouth and head-roll rules."""
+        if self._stop.is_set():
+            return
+        # Lip sync owns the mouth while speaking.
+        if motor in MOUTH and self.speaking.is_set():
+            return
+        if motor == ex.HEADROLL and not self.has_headroll:
+            return
+        ohbot.move(motor, pos, speed)
 
     def _idle_loop(self):
-        """Blink and drift so the robot looks alive while the LLM is generating.
+        """Blink, drift, and backchannel-nod so the robot never looks frozen.
 
-        Every write is preceded by an _idle_allowed check, because speak() can
-        clear it at any moment.
+        Unlike the earlier version, this keeps running during speech -- the
+        write lock makes that safe.
         """
         next_blink = time.time() + random.uniform(*self.blink_interval)
         next_drift = time.time() + random.uniform(*self.drift_interval)
-        pulse_up = True
+        next_backchannel = time.time() + random.uniform(2.5, 5.0)
 
         while not self._stop.is_set():
-            time.sleep(0.2)
-            if not self._idle_allowed.is_set():
-                continue
-
+            time.sleep(0.15)
             now = time.time()
 
             if now >= next_blink:
-                self._blink()
+                self._play(GESTURES["blink"])
                 next_blink = now + random.uniform(*self.blink_interval)
 
-            elif now >= next_drift:
-                self._drift()
+            elif self._listening.is_set() and now >= next_backchannel:
+                # A small nod while being spoken to reads as "I'm following".
+                self._play(GESTURES["slow_nod"][:2])
+                next_backchannel = now + random.uniform(3.0, 6.0)
+
+            elif now >= next_drift and not self.speaking.is_set():
+                motor = random.choice([ex.HEADTURN, ex.HEADNOD])
+                self._move(motor, random.randint(4, 6), 2)
                 next_drift = now + random.uniform(*self.drift_interval)
-
-            elif self.state == "thinking":
-                # Gentle brightness pulse so waiting reads as "working".
-                r, g, b = self.colours["thinking"]
-                scale = 1.0 if pulse_up else 0.4
-                self._write(
-                    ohbot.setEyeColour,
-                    int(r * scale),
-                    int(g * scale),
-                    int(b * scale),
-                )
-                pulse_up = not pulse_up
-
-    def _blink(self):
-        self._write(ohbot.move, ohbot.LIDBLINK, 0, 10)
-        time.sleep(0.12)
-        self._write(ohbot.move, ohbot.LIDBLINK, REST["lidblink"], 10)
-
-    def _drift(self):
-        motor = random.choice([ohbot.HEADTURN, ohbot.HEADNOD])
-        target = random.randint(4, 6)  # small movement around centre
-        self._write(ohbot.move, motor, target, 2)
-
-    def _write(self, fn, *args):
-        """Perform a robot write only if idle motion is still permitted.
-
-        Re-checking here closes the window between the loop's check and the
-        actual write, during which speak() may have started.
-        """
-        if self._idle_allowed.is_set() and not self._stop.is_set():
-            fn(*args)
