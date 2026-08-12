@@ -35,7 +35,13 @@ REST = {"headnod": 5, "headturn": 5, "lidblink": 5}
 class Ohbot:
     """Context manager wrapping the robot for conversational use."""
 
-    def __init__(self, idle=True):
+    def __init__(self, idle=True, colours=None, blink_interval=(2, 6), drift_interval=(4, 9)):
+        self.colours = dict(COLOURS)
+        if colours:
+            # YAML gives lists; the ohbot calls want positional r, g, b.
+            self.colours.update({k: tuple(v) for k, v in colours.items()})
+        self.blink_interval = tuple(blink_interval)
+        self.drift_interval = tuple(drift_interval)
         self.state = "listening"
         # Set while the robot is talking. voice.py reads this to avoid
         # transcribing the robot's own speech.
@@ -69,7 +75,7 @@ class Ohbot:
         if self._idle_thread is not None:
             self._idle_thread.join(timeout=2)
         try:
-            ohbot.setEyeColour(*COLOURS["off"])
+            ohbot.setEyeColour(*self.colours["off"])
             ohbot.reset()
         finally:
             ohbot.close()  # detach motors so they stop drawing current
@@ -98,7 +104,7 @@ class Ohbot:
         """Signal listening / thinking / speaking via eye colour."""
         self.state = state
         if self._safe_to_write():
-            ohbot.setEyeColour(*COLOURS.get(state, COLOURS["off"]))
+            ohbot.setEyeColour(*self.colours.get(state, self.colours["off"]))
 
     def _safe_to_write(self):
         """True when no speech is in progress, so serial writes won't interleave."""
@@ -112,8 +118,8 @@ class Ohbot:
         Every write is preceded by an _idle_allowed check, because speak() can
         clear it at any moment.
         """
-        next_blink = time.time() + random.uniform(2, 5)
-        next_drift = time.time() + random.uniform(4, 8)
+        next_blink = time.time() + random.uniform(*self.blink_interval)
+        next_drift = time.time() + random.uniform(*self.drift_interval)
         pulse_up = True
 
         while not self._stop.is_set():
@@ -125,15 +131,15 @@ class Ohbot:
 
             if now >= next_blink:
                 self._blink()
-                next_blink = now + random.uniform(2, 6)
+                next_blink = now + random.uniform(*self.blink_interval)
 
             elif now >= next_drift:
                 self._drift()
-                next_drift = now + random.uniform(4, 9)
+                next_drift = now + random.uniform(*self.drift_interval)
 
             elif self.state == "thinking":
                 # Gentle brightness pulse so waiting reads as "working".
-                r, g, b = COLOURS["thinking"]
+                r, g, b = self.colours["thinking"]
                 scale = 1.0 if pulse_up else 0.4
                 self._write(
                     ohbot.setEyeColour,

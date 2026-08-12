@@ -70,21 +70,21 @@ def sanitise(text):
     return re.sub(r"\s+", " ", text).strip()
 
 
-def list_models():
+def list_models(host=HOST):
     """Return the names of locally installed models."""
     try:
-        r = requests.get("{}/api/tags".format(HOST), timeout=5)
+        r = requests.get("{}/api/tags".format(host), timeout=5)
         r.raise_for_status()
         return [m["name"] for m in r.json().get("models", [])]
     except requests.RequestException as e:
         raise OllamaError(
-            "Cannot reach Ollama at {}. Is it running? Try: ollama serve".format(HOST)
+            "Cannot reach Ollama at {}. Is it running? Try: ollama serve".format(host)
         ) from e
 
 
-def check_model(model):
+def check_model(model, host=HOST):
     """Raise a helpful error if the model isn't installed."""
-    available = list_models()
+    available = list_models(host)
     # Ollama reports "phi4-mini:latest"; accept the bare name too.
     if model in available or "{}:latest".format(model) in available:
         return
@@ -98,9 +98,19 @@ def check_model(model):
 class Conversation:
     """Holds chat history and streams replies from Ollama."""
 
-    def __init__(self, model=DEFAULT_MODEL, system=SYSTEM_PROMPT):
+    def __init__(
+        self,
+        model=DEFAULT_MODEL,
+        system=SYSTEM_PROMPT,
+        host=HOST,
+        temperature=0.7,
+        num_predict=80,
+    ):
         self.model = model
         self.system = system
+        self.host = host
+        self.temperature = temperature
+        self.num_predict = num_predict
         self.messages = []
 
     def reset(self):
@@ -110,7 +120,7 @@ class Conversation:
         """Force the model to load now, so the first real reply isn't slow."""
         try:
             requests.post(
-                "{}/api/chat".format(HOST),
+                "{}/api/chat".format(self.host),
                 json={
                     "model": self.model,
                     "messages": [{"role": "user", "content": "hi"}],
@@ -126,13 +136,16 @@ class Conversation:
         """Producer: push response fragments onto the queue, then a None sentinel."""
         try:
             r = requests.post(
-                "{}/api/chat".format(HOST),
+                "{}/api/chat".format(self.host),
                 json={
                     "model": self.model,
                     "messages": [{"role": "system", "content": self.system}]
                     + self.messages,
                     "stream": True,
-                    "options": {"temperature": 0.7, "num_predict": 80},
+                    "options": {
+                        "temperature": self.temperature,
+                        "num_predict": self.num_predict,
+                    },
                 },
                 stream=True,
                 timeout=TIMEOUT,

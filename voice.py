@@ -48,11 +48,21 @@ def _rms(block):
 class Listener:
     """Captures utterances from the microphone and transcribes them."""
 
-    def __init__(self, device=None, model_size=MODEL_SIZE):
+    def __init__(
+        self,
+        device=None,
+        model_size=MODEL_SIZE,
+        silence_seconds=SILENCE_SECONDS,
+        min_speech_seconds=MIN_SPEECH_SECONDS,
+        noise_multiplier=NOISE_MULTIPLIER,
+    ):
         print("Loading speech model ({})...".format(model_size), flush=True)
         # int8 on CPU is the fast path on Apple Silicon.
         self.model = WhisperModel(model_size, device="cpu", compute_type="int8")
         self.device = device
+        self.silence_seconds = silence_seconds
+        self.min_speech_seconds = min_speech_seconds
+        self.noise_multiplier = noise_multiplier
         self.threshold = FLOOR
 
     # -- capture -----------------------------------------------------------
@@ -85,7 +95,7 @@ class Listener:
             )
 
         baseline = float(np.median(levels))
-        self.threshold = max(baseline * NOISE_MULTIPLIER, FLOOR)
+        self.threshold = max(baseline * self.noise_multiplier, FLOOR)
         print("Noise floor {:.5f}, threshold {:.5f}".format(baseline, self.threshold))
 
     def record_utterance(self, bot=None):
@@ -98,7 +108,7 @@ class Listener:
         silence_frames = 0
         started = False
 
-        silence_limit = int(SILENCE_SECONDS * SAMPLE_RATE / BLOCK)
+        silence_limit = int(self.silence_seconds * SAMPLE_RATE / BLOCK)
         max_frames = int(MAX_UTTERANCE_SECONDS * SAMPLE_RATE / BLOCK)
 
         with sd.InputStream(
@@ -135,7 +145,7 @@ class Listener:
                 if silence_frames >= silence_limit or len(frames) >= max_frames:
                     break
 
-        if speech_frames * BLOCK / SAMPLE_RATE < MIN_SPEECH_SECONDS:
+        if speech_frames * BLOCK / SAMPLE_RATE < self.min_speech_seconds:
             return None
         return np.concatenate(frames)
 

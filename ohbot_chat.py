@@ -1,9 +1,12 @@
 """Talk to an Ohbot robot powered by a local Ollama model.
 
-    python ohbot_chat.py                     # type to chat
-    python ohbot_chat.py --model qwen3.6:35b # pick a different model
-    python ohbot_chat.py --voice             # speak instead of typing
-    python ohbot_chat.py --no-idle           # disable blinking / head drift
+    python ohbot_chat.py                      # type to chat
+    python ohbot_chat.py --voice              # speak instead of typing
+    python ohbot_chat.py --persona pirate     # different personality and voice
+    python ohbot_chat.py --list-devices       # show audio devices, then exit
+
+Settings live in config.yaml, overridden by config.local.yaml (git-ignored,
+for machine-specific things like audio devices), overridden by these flags.
 
 Run from the project root so the ohbotData/ calibration folder is shared.
 Requires Ollama running locally (`ollama serve`) and the Ohbot plugged in.
@@ -12,39 +15,42 @@ Requires Ollama running locally (`ollama serve`) and the Ohbot plugged in.
 import argparse
 import sys
 
+import audio
+import config as config_mod
 import llm
 import tts
 from robot import Ohbot
 
-BANNER = """Ohbot chat -- model: {model}, voice: {engine}
+BANNER = """Ohbot chat -- model: {model}, voice: {engine}, persona: {persona}
+Audio in: {mic} | out: {out}
 Type and press enter. Commands: /reset (forget context), /quit
 """
 
 
 def parse_args():
     p = argparse.ArgumentParser(description="Chat with an Ohbot robot.")
-    p.add_argument("--model", default=llm.DEFAULT_MODEL, help="Ollama model name")
+    # Config-backed options default to None so "not given" is distinguishable
+    # from "given the same value as the default".
+    p.add_argument("--config", default=config_mod.DEFAULT_PATH, help="path to config.yaml")
+    p.add_argument("--persona", default=None, help="persona from config.yaml")
+    p.add_argument("--model", default=None, help="Ollama model name")
     p.add_argument("--voice", action="store_true", help="use the microphone instead of typing")
     p.add_argument("--no-idle", action="store_true", help="disable idle blinking and drift")
-    p.add_argument(
-        "--tts",
-        choices=("kokoro", "say"),
-        default="kokoro",
-        help="speech engine: kokoro (better voice) or say (macOS built-in)",
-    )
-    p.add_argument(
-        "--voice-name",
-        default=tts.DEFAULT_VOICE,
-        help="Kokoro voice, e.g. af_heart, bf_emma, am_michael",
-    )
-    p.add_argument("--speed", type=float, default=tts.DEFAULT_SPEED, help="speech speed")
-    p.add_argument(
-        "--max-sentences",
-        type=int,
-        default=llm.MAX_SENTENCES,
-        help="hard cap on spoken sentences per reply",
-    )
+    p.add_argument("--tts", choices=("kokoro", "say"), default=None, help="speech engine")
+    p.add_argument("--voice-name", default=None, help="Kokoro voice, e.g. af_heart, bf_emma")
+    p.add_argument("--speed", type=float, default=None, help="speech speed")
+    p.add_argument("--max-sentences", type=int, default=None, help="cap on spoken sentences")
+    p.add_argument("--input-device", default=None, help="microphone name substring")
+    p.add_argument("--output-device", default=None, help="speaker name substring")
+    p.add_argument("--list-devices", action="store_true", help="list audio devices and exit")
     return p.parse_args()
+
+
+def pick(cli_value, cfg, path, fallback):
+    """CLI beats config, config beats the code default."""
+    if cli_value is not None:
+        return cli_value
+    return cfg.get(path, fallback)
 
 
 def respond(bot, convo, text, max_sentences):
@@ -82,22 +88,82 @@ def typed_inputs():
 def main():
     args = parse_args()
 
+    if args.list_devices:
+        print(audio.describe())
+        return 0
+
+    try:
+        cfg = config_mod.load(args.config)
+    except RuntimeError as e:
+        print(e, file=sys.stderr)
+        return 1
+
+    # Persona supplies a system prompt and a preferred voice, both of which an
+    # explicit flag can still override.
+    try:
+        persona_name = args.persona or cfg.get("persona")
+        persona = cfg.persona(persona_name)
+    except KeyError as e:
+        # KeyError's str() wraps the message in quotes; args[0] is the plain text.
+        print(e.args[0], file=sys.stderr)
+        return 1
+
+    model = pick(args.model, cfg, "llm.model", llm.DEFAULT_MODEL)
+    host = cfg.get("llm.host", llm.HOST)
+    max_sentences = pick(args.max_sentences, cfg, "llm.max_sentences", llm.MAX_SENTENCES)
+
     # Fail fast with a useful message before touching the robot.
     try:
-        llm.check_model(args.model)
+        llm.check_model(model, host)
     except llm.OllamaError as e:
         print(e, file=sys.stderr)
         return 1
 
-    convo = llm.Conversation(model=args.model)
+    # -- audio devices
+    try:
+        mic_device = audio.resolve(
+            pick(args.input_device, cfg, "audio.input_device", None), audio.INPUT
+        )
+        out_device = audio.resolve(
+            pick(args.output_device, cfg, "audio.output_device", None), audio.OUTPUT
+        )
+    except audio.DeviceNotFound as e:
+        print(e, file=sys.stderr)
+        return 1
+
+    audio.install_output(out_device)
+
+    convo = llm.Conversation(
+        model=model,
+        system=persona.get("system_prompt", llm.SYSTEM_PROMPT),
+        host=host,
+        temperature=cfg.get("llm.temperature", 0.7),
+        num_predict=cfg.get("llm.num_predict", 80),
+    )
 
     # A demo that sounds worse beats a demo that doesn't run, so a missing or
     # broken Kokoro falls back to the built-in voice rather than exiting.
+    engine_name = pick(args.tts, cfg, "tts.engine", "kokoro")
+
+    # Voice precedence: --voice-name > the persona's own voice > tts.voice >
+    # built-in default. The persona beats the global setting because choosing a
+    # character is a more specific intent than setting a default voice.
+    voice_name = (
+        args.voice_name
+        or persona.get("voice")
+        or cfg.get("tts.voice", tts.DEFAULT_VOICE)
+    )
+
     engine = "say"
-    if args.tts == "kokoro":
+    if engine_name == "kokoro":
         try:
-            tts.install(tts.KokoroTTS(voice=args.voice_name, speed=args.speed))
-            engine = "kokoro ({})".format(args.voice_name)
+            tts.install(
+                tts.KokoroTTS(
+                    voice=voice_name,
+                    speed=pick(args.speed, cfg, "tts.speed", tts.DEFAULT_SPEED),
+                )
+            )
+            engine = "kokoro ({})".format(voice_name)
         except Exception as e:
             # Deliberately broad: missing model files, a failed ONNX load and a
             # misplaced espeak-ng data dir all mean the same thing here.
@@ -106,7 +172,17 @@ def main():
     if args.voice:
         import voice  # imported lazily: heavy deps, only needed with --voice
 
-        listener = voice.Listener()
+        listener = voice.Listener(
+            device=mic_device,
+            model_size=cfg.get("speech_to_text.model", voice.MODEL_SIZE),
+            silence_seconds=cfg.get("speech_to_text.silence_seconds", voice.SILENCE_SECONDS),
+            min_speech_seconds=cfg.get(
+                "speech_to_text.min_speech_seconds", voice.MIN_SPEECH_SECONDS
+            ),
+            noise_multiplier=cfg.get(
+                "speech_to_text.noise_multiplier", voice.NOISE_MULTIPLIER
+            ),
+        )
         source = lambda bot: listener.listen_loop(bot)  # noqa: E731
         # An empty tuple in typed mode, so the handler below is safe either way.
         mic_errors = (voice.MicrophoneBlocked,)
@@ -114,11 +190,27 @@ def main():
         source = lambda bot: typed_inputs()  # noqa: E731
         mic_errors = ()
 
-    print(BANNER.format(model=args.model, engine=engine))
+    print(
+        BANNER.format(
+            model=model,
+            engine=engine,
+            persona=persona_name or "default",
+            mic=audio.device_name(mic_device),
+            out=audio.device_name(out_device),
+        )
+    )
+    if cfg.sources:
+        print("config: {}".format(", ".join(cfg.sources)))
     print("Loading model...", flush=True)
     convo.warm_up()
 
-    with Ohbot(idle=not args.no_idle) as bot:
+    idle = False if args.no_idle else cfg.get("robot.idle", True)
+    with Ohbot(
+        idle=idle,
+        colours=cfg.get("robot.eye_colours"),
+        blink_interval=cfg.get("robot.blink_interval", (2, 6)),
+        drift_interval=cfg.get("robot.drift_interval", (4, 9)),
+    ) as bot:
         bot.speak("Hello! I am ready to chat.")
 
         try:
@@ -134,7 +226,7 @@ def main():
                 if args.voice:
                     print("You: {}".format(text))
 
-                respond(bot, convo, text, args.max_sentences)
+                respond(bot, convo, text, max_sentences)
         except KeyboardInterrupt:
             print()
         except mic_errors as e:

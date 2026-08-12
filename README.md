@@ -70,12 +70,62 @@ python ohbot_chat.py --no-idle            # stop the blinking and drift
 
 Commands at the prompt: `/reset` forgets the conversation, `/quit` exits.
 
+### Configuration
+
+Settings live in `config.yaml` — model, voice, speech timings, eye colours, idle behaviour and
+personality presets. Precedence, lowest to highest:
+
+```text
+code defaults  <  config.yaml  <  config.local.yaml  <  command-line flags
+```
+
+`config.yaml` is committed and works on any machine (audio devices default to the system's).
+`config.local.yaml` is **git-ignored** and holds whatever is specific to your hardware:
+
+```yaml
+audio:
+  input_device: Plantronics     # case-insensitive substring of the device name
+  output_device: Plantronics
+```
+
+`python ohbot_chat.py --list-devices` shows what's available. A name that matches nothing gives an
+error listing the real devices, rather than silently using the wrong one.
+
+Matching is **direction-aware**, which matters: a headset appears *twice* under one name, once with
+input channels and once with output channels. One name covers both ends correctly.
+
+#### Personas
+
+`config.yaml` defines `friendly`, `pirate` and `teacher`, each pairing a system prompt with a voice:
+
+```bash
+python ohbot_chat.py --persona pirate
+```
+
+Voice precedence is `--voice-name` > the persona's voice > `tts.voice` > built-in default — choosing
+a character is treated as more specific than setting a global default voice.
+
+#### Headset vs speakers
+
+Ohbot's own playback always uses the system default output, so `audio.py` replaces
+`ohbot._playSpeech` to route audio to a chosen device (falling back to the default, with a warning,
+if the device rejects the stream).
+
+Which you want depends on the situation:
+
+| Setup | Effect |
+| --- | --- |
+| Both ends on the headset | You hear Ohbot in the earpiece and speak into the boom mic. It cannot hear itself. Ideal for testing — but **the audience hears nothing**. |
+| Output on MacBook Speakers | The room hears Ohbot. It will also hear itself, which is handled — listening is suspended while it speaks. **Use this for a live demo.** |
+
 Eye colour tells you what it's doing: **blue** listening, **amber** thinking
 (pulsing), **green** speaking.
 
 | Module | Role |
 | --- | --- |
 | `setup_demo.py` | Pre-demo downloads, warmups and readiness checks |
+| `config.py` / `config.yaml` | Settings, personas, and the local-override merge |
+| `audio.py` | Device resolution and output routing |
 | `llm.py` | Ollama streaming client, sentence splitter, TTS sanitiser |
 | `tts.py` | Kokoro speech, swapped in behind `ohbot.say()` |
 | `robot.py` | Speech, idle motion, eye-colour state, guaranteed `close()` |

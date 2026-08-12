@@ -97,18 +97,18 @@ def check_robot():
     )
 
 
-def check_ollama(model):
+def check_ollama(model, host="http://localhost:11434"):
     import llm
 
     try:
-        models = llm.list_models()
+        models = llm.list_models(host)
     except llm.OllamaError as e:
         return report("Ollama running", False, e)
 
     report("Ollama running", True, "{} model(s) installed".format(len(models)))
 
     try:
-        llm.check_model(model)
+        llm.check_model(model, host)
         return report("Chat model '{}' installed".format(model), True)
     except llm.OllamaError as e:
         return report("Chat model '{}' installed".format(model), False, e)
@@ -164,8 +164,37 @@ def check_kokoro():
     )
 
 
-def check_microphone():
-    """A warning, not a failure -- typed mode is a perfectly good demo."""
+def check_devices(cfg):
+    """Resolve configured audio devices and report what they landed on."""
+    import audio
+
+    resolved = {}
+    for key, kind in (("input_device", audio.INPUT), ("output_device", audio.OUTPUT)):
+        name = cfg.get("audio.{}".format(key))
+        try:
+            index = audio.resolve(name, kind)
+        except audio.DeviceNotFound as e:
+            report("Audio {}".format(kind), False, e)
+            resolved[kind] = None
+            continue
+        resolved[kind] = index
+        report(
+            "Audio {}".format(kind),
+            True,
+            "{}{}".format(
+                audio.device_name(index),
+                "" if name else "  (system default -- set audio.{} to pin it)".format(key),
+            ),
+        )
+    return resolved
+
+
+def check_microphone(device=None):
+    """A warning, not a failure -- typed mode is a perfectly good demo.
+
+    Checks the *configured* device, not the system default: otherwise this can
+    pass while the demo fails on a different mic.
+    """
     try:
         import voice
     except ImportError as e:
@@ -173,7 +202,8 @@ def check_microphone():
 
     try:
         listener = voice.Listener.__new__(voice.Listener)  # skip the model load
-        listener.device = None
+        listener.device = device
+        listener.noise_multiplier = voice.NOISE_MULTIPLIER
         listener.threshold = voice.FLOOR
         listener.calibrate()
         return report("Microphone delivering audio", True, level=WARNING)
@@ -228,12 +258,14 @@ def warm_whisper():
         return report("Whisper loaded", False, e, level=WARNING)
 
 
-def smoke_test(voice_name):
+def smoke_test(voice_name, output_device=None):
     """Opt-in: prove the whole chain by making the robot actually speak."""
+    import audio
     import tts
     from robot import Ohbot
 
     try:
+        audio.install_output(output_device)
         tts.install(tts.KokoroTTS(voice=voice_name))
     except Exception as e:
         return report("Smoke test", False, e)
@@ -251,37 +283,52 @@ def smoke_test(voice_name):
 
 def main():
     p = argparse.ArgumentParser(description="Pre-demo setup and checks.")
-    p.add_argument("--model", default="phi4-mini", help="Ollama chat model")
-    p.add_argument("--voice-name", default="af_heart", help="Kokoro voice")
+    p.add_argument("--config", default="config.yaml", help="path to config.yaml")
+    p.add_argument("--model", default=None, help="Ollama chat model")
+    p.add_argument("--voice-name", default=None, help="Kokoro voice")
     p.add_argument("--smoke", action="store_true", help="also make the robot speak")
     p.add_argument("--skip-mic", action="store_true", help="skip the microphone check")
     args = p.parse_args()
 
     print("Ohbot demo setup\n" + "=" * 40)
 
+    import config as config_mod
+
+    cfg = config_mod.load(args.config)
+    model = args.model or cfg.get("llm.model", "phi4-mini")
+    voice_name = args.voice_name or cfg.get("tts.voice", "af_heart")
+
     section("Environment")
     check_python()
     check_cwd()
+    report(
+        "Config loaded",
+        True,
+        ", ".join(cfg.sources) if cfg.sources else "none found -- using code defaults",
+    )
 
     section("Hardware and services")
     check_robot()
-    check_ollama(args.model)
+    check_ollama(model, cfg.get("llm.host", "http://localhost:11434"))
+
+    section("Audio devices")
+    resolved = check_devices(cfg)
 
     section("Models")
     check_kokoro()
 
     section("Warming up (so the first live response isn't slow)")
-    warm_ollama(args.model)
-    warm_kokoro(args.voice_name)
+    warm_ollama(model)
+    warm_kokoro(voice_name)
     warm_whisper()
 
     if not args.skip_mic:
         section("Microphone (only needed for --voice)")
-        check_microphone()
+        check_microphone(resolved.get("input"))
 
     if args.smoke:
         section("Smoke test")
-        smoke_test(args.voice_name)
+        smoke_test(voice_name, resolved.get("output"))
 
     # -- summary
     failed = [n for n, ok, lvl in results if not ok and lvl == CRITICAL]
