@@ -15,11 +15,11 @@ Requires Ollama running locally (`ollama serve`) and the Ohbot plugged in.
 import argparse
 import sys
 
-import audio
-import config as config_mod
-import llm
-import tts
-from robot import Ohbot
+from ohbot_kit import audio
+from ohbot_kit import config as config_mod
+from ohbot_kit import llm
+from ohbot_kit import tts
+from ohbot_kit.robot import Ohbot
 
 BANNER = """Ohbot chat -- model: {model}, voice: {engine}, persona: {persona}
 Audio in: {mic} | out: {out}
@@ -170,7 +170,7 @@ def main():
             print("[tts] Kokoro unavailable, using macOS say: {}".format(e), file=sys.stderr)
 
     if args.voice:
-        import voice  # imported lazily: heavy deps, only needed with --voice
+        from ohbot_kit import voice  # imported lazily: heavy deps, only needed with --voice
 
         listener = voice.Listener(
             device=mic_device,

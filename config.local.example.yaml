@@ -1,0 +1,24 @@
+# Copy to config.local.yaml and edit. That file is git-ignored, so your machine's
+# settings never collide with a teammate's.
+#
+#     cp config.local.example.yaml config.local.yaml
+#
+# Anything here overrides config.yaml. Command-line flags override both.
+
+audio:
+  # Case-insensitive substring of the device name; see them all with:
+  #     python ohbot_chat.py --list-devices
+  #
+  # A headset appears twice under one name -- once as an input, once as an
+  # output. Matching is direction-aware, so one name covers both ends.
+  #
+  # FOR A LIVE DEMO put the output on your laptop speakers, or the audience
+  # hears nothing. A headset is better while developing, and essential in a
+  # room with several robots or yours will hear the others.
+  input_device: null       # e.g. Plantronics
+  output_device: null      # e.g. MacBook Pro Speakers
+
+# Uncomment if your Ohbot has no head-roll servo fitted (motor 7).
+# Those keyframes are then skipped instead of the gesture failing.
+# robot:
+#   has_headroll: false

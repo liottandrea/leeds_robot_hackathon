@@ -31,11 +31,11 @@ import sys
 
 import _bootstrap  # noqa: F401
 
-import config as config_mod
-import expression
-import llm
-import tts
-from robot import Ohbot
+from ohbot_kit import config as config_mod
+from ohbot_kit import expression
+from ohbot_kit import llm
+from ohbot_kit import tts
+from ohbot_kit.robot import Ohbot
 
 
 def main():
@@ -67,8 +67,8 @@ def main():
 
     listener = None
     if args.voice:
-        import audio
-        import voice
+        from ohbot_kit import audio
+        from ohbot_kit import voice
 
         listener = voice.Listener(
             device=audio.resolve(cfg.get("audio.input_device"), audio.INPUT)

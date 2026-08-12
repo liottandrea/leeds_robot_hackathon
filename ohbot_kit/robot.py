@@ -26,9 +26,9 @@ import random
 import threading
 import time
 
-import expression as ex
-import serial_safe
-from expression import GESTURES, MOUTH, POSES, REST
+from . import expression as ex
+from . import serial_safe
+from .expression import GESTURES, MOUTH, POSES, REST
 from ohbot import ohbot
 
 # Eye colours as (r, g, b), each 0-10.
@@ -226,6 +226,14 @@ class Ohbot:
                 return
             self._move(motor, pos, speed)
             time.sleep(hold)
+
+    def set_eyes(self, r, g, b):
+        """Set the eye LEDs directly. Each channel is 0-10.
+
+        Needs the Illuminating Eyes accessory; without it this is a harmless
+        no-op rather than an error.
+        """
+        ohbot.setEyeColour(r, g, b)
 
     def set_state(self, state):
         """Signal listening / thinking / speaking via eye colour."""

@@ -14,12 +14,14 @@ script measures them; the third needs your eyes, and is printed as a checklist.
 3. PERCEPTUAL Does it look right to a person? Checklist at the end.
 """
 
+import _bootstrap  # noqa: F401
+
 import argparse
 import sys
 import time
 
-import expression
-import llm
+from ohbot_kit import expression
+from ohbot_kit import llm
 
 # Each case lists the emotions a reasonable person would accept. Deliberately
 # generous -- we are testing "not wrong", not "matches my favourite".
@@ -133,11 +135,11 @@ def mechanical_check(scored, pause=1.5):
     case and not another is exactly the kind of intermittent fault a single
     sample hides.
     """
-    import audio
-    import config as config_mod
-    import tts
+    from ohbot_kit import audio
+    from ohbot_kit import config as config_mod
+    from ohbot_kit import tts
     from ohbot import ohbot
-    from robot import Ohbot
+    from ohbot_kit.robot import Ohbot
 
     print("\n2. MECHANICAL -- performing all {} cases on the robot".format(len(scored)))
     print("   Watch the face. Each case is announced first.\n")
@@ -266,7 +268,7 @@ def main():
     p.add_argument("--model", default=None)
     args = p.parse_args()
 
-    import config as config_mod
+    from ohbot_kit import config as config_mod
 
     cfg = config_mod.load(warn=False)
     model = args.model or cfg.get("llm.model", llm.DEFAULT_MODEL)

@@ -10,6 +10,8 @@ find out here rather than in front of an audience.
 Exits non-zero if anything critical failed.
 """
 
+import _bootstrap  # noqa: F401
+
 import argparse
 import os
 import platform
@@ -61,7 +63,7 @@ def check_python():
 
 def check_cwd():
     """ohbot resolves ohbotData/ relative to cwd, so this genuinely matters."""
-    ok = os.path.exists("ohbot_chat.py")
+    ok = os.path.exists("config.yaml") and os.path.isdir("ohbot_kit")
     return report(
         "Running from the project root",
         ok,
@@ -102,7 +104,7 @@ def check_robot():
 
 
 def check_ollama(model, host="http://localhost:11434"):
-    import llm
+    from ohbot_kit import llm
 
     try:
         models = llm.list_models(host)
@@ -145,7 +147,7 @@ def download(url, dest):
 
 
 def check_kokoro():
-    import tts
+    from ohbot_kit import tts
 
     for path in (tts.MODEL_FILE, tts.VOICES_FILE):
         if os.path.exists(path):
@@ -170,7 +172,7 @@ def check_kokoro():
 
 def check_devices(cfg):
     """Resolve configured audio devices and report what they landed on."""
-    import audio
+    from ohbot_kit import audio
 
     resolved = {}
     for key, kind in (("input_device", audio.INPUT), ("output_device", audio.OUTPUT)):
@@ -200,7 +202,7 @@ def check_microphone(device=None):
     pass while the demo fails on a different mic.
     """
     try:
-        import voice
+        from ohbot_kit import voice
     except ImportError as e:
         return report("Microphone", False, e, level=WARNING)
 
@@ -221,7 +223,7 @@ def check_microphone(device=None):
 
 
 def warm_ollama(model):
-    import llm
+    from ohbot_kit import llm
 
     t0 = time.time()
     llm.Conversation(model=model).warm_up()
@@ -229,7 +231,7 @@ def warm_ollama(model):
 
 
 def warm_kokoro(voice_name):
-    import tts
+    from ohbot_kit import tts
 
     try:
         t0 = time.time()
@@ -247,7 +249,7 @@ def warm_kokoro(voice_name):
 def warm_whisper():
     try:
         import numpy as np
-        import voice
+        from ohbot_kit import voice
 
         t0 = time.time()
         listener = voice.Listener()
@@ -264,9 +266,9 @@ def warm_whisper():
 
 def smoke_test(voice_name, output_device=None):
     """Opt-in: prove the whole chain by making the robot actually speak."""
-    import audio
-    import tts
-    from robot import Ohbot
+    from ohbot_kit import audio
+    from ohbot_kit import tts
+    from ohbot_kit.robot import Ohbot
 
     try:
         audio.install_output(output_device)
@@ -296,7 +298,7 @@ def main():
 
     print("Ohbot demo setup\n" + "=" * 40)
 
-    import config as config_mod
+    from ohbot_kit import config as config_mod
 
     cfg = config_mod.load(args.config)
     model = args.model or cfg.get("llm.model", "phi4-mini")
@@ -353,7 +355,8 @@ def main():
     else:
         print("READY. Everything checks out.")
 
-    print("\nStart the demo with:  python ohbot_chat.py")
+    print("\nNext:  python examples/01_hello_robot.py"
+          "     then  python examples/08_empathy_chat.py")
     return 0
 
 

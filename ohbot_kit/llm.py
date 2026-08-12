@@ -254,7 +254,7 @@ class Conversation:
         self.messages.append({"role": "user", "content": user_text})
         # Gestures are described, not just named -- see expression.GESTURE_MEANINGS.
         try:
-            import expression
+            from . import expression
 
             gesture_menu = expression.gesture_menu()
         except Exception:

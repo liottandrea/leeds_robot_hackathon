@@ -15,11 +15,11 @@ import time
 
 import _bootstrap  # noqa: F401
 
-import audio
-import config as config_mod
-import expression as ex
-import tts
-from robot import Ohbot
+from ohbot_kit import audio
+from ohbot_kit import config as config_mod
+from ohbot_kit import expression as ex
+from ohbot_kit import tts
+from ohbot_kit.robot import Ohbot
 
 
 def setup_audio(cfg):
