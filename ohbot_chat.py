@@ -13,9 +13,10 @@ import argparse
 import sys
 
 import llm
+import tts
 from robot import Ohbot
 
-BANNER = """Ohbot chat -- model: {model}
+BANNER = """Ohbot chat -- model: {model}, voice: {engine}
 Type and press enter. Commands: /reset (forget context), /quit
 """
 
@@ -25,6 +26,18 @@ def parse_args():
     p.add_argument("--model", default=llm.DEFAULT_MODEL, help="Ollama model name")
     p.add_argument("--voice", action="store_true", help="use the microphone instead of typing")
     p.add_argument("--no-idle", action="store_true", help="disable idle blinking and drift")
+    p.add_argument(
+        "--tts",
+        choices=("kokoro", "say"),
+        default="kokoro",
+        help="speech engine: kokoro (better voice) or say (macOS built-in)",
+    )
+    p.add_argument(
+        "--voice-name",
+        default=tts.DEFAULT_VOICE,
+        help="Kokoro voice, e.g. af_heart, bf_emma, am_michael",
+    )
+    p.add_argument("--speed", type=float, default=tts.DEFAULT_SPEED, help="speech speed")
     p.add_argument(
         "--max-sentences",
         type=int,
@@ -78,6 +91,18 @@ def main():
 
     convo = llm.Conversation(model=args.model)
 
+    # A demo that sounds worse beats a demo that doesn't run, so a missing or
+    # broken Kokoro falls back to the built-in voice rather than exiting.
+    engine = "say"
+    if args.tts == "kokoro":
+        try:
+            tts.install(tts.KokoroTTS(voice=args.voice_name, speed=args.speed))
+            engine = "kokoro ({})".format(args.voice_name)
+        except Exception as e:
+            # Deliberately broad: missing model files, a failed ONNX load and a
+            # misplaced espeak-ng data dir all mean the same thing here.
+            print("[tts] Kokoro unavailable, using macOS say: {}".format(e), file=sys.stderr)
+
     if args.voice:
         import voice  # imported lazily: heavy deps, only needed with --voice
 
@@ -89,7 +114,7 @@ def main():
         source = lambda bot: typed_inputs()  # noqa: E731
         mic_errors = ()
 
-    print(BANNER.format(model=args.model))
+    print(BANNER.format(model=args.model, engine=engine))
     print("Loading model...", flush=True)
     convo.warm_up()
 

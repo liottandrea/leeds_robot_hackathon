@@ -40,15 +40,31 @@ fade the eyes, and sweep the head and eyelids.
 ## Chatbot
 
 Hold a spoken conversation with the robot, powered by a local
-[Ollama](https://ollama.com/) model. Nothing leaves the machine.
+[Ollama](https://ollama.com/) model with [Kokoro-82M](https://github.com/thewh1teagle/kokoro-onnx)
+for the voice. Nothing leaves the machine.
+
+### Before the demo
 
 ```bash
 ollama serve                 # in another terminal, if not already running
 ollama pull phi4-mini        # 2.5 GB
 
+python setup_demo.py         # downloads models, warms everything up, checks hardware
+```
+
+Run this once before you present. It fetches the Kokoro (~336 MB) and Whisper (~150 MB) models,
+warms up all three models so the first live answer isn't slow, and tells you plainly if the robot,
+Ollama or the microphone isn't ready. `--smoke` also makes the robot speak, as a full end-to-end
+check. It exits non-zero if anything critical is wrong.
+
+### Running it
+
+```bash
 python ohbot_chat.py                      # type, robot speaks back
 python ohbot_chat.py --voice              # speak, robot speaks back
-python ohbot_chat.py --model qwen3.6:35b  # use a different model
+python ohbot_chat.py --model qwen3.6:35b  # use a different LLM
+python ohbot_chat.py --voice-name bf_emma # different Kokoro voice (54 available)
+python ohbot_chat.py --tts say            # fall back to the macOS voice
 python ohbot_chat.py --no-idle            # stop the blinking and drift
 ```
 
@@ -59,10 +75,35 @@ Eye colour tells you what it's doing: **blue** listening, **amber** thinking
 
 | Module | Role |
 | --- | --- |
+| `setup_demo.py` | Pre-demo downloads, warmups and readiness checks |
 | `llm.py` | Ollama streaming client, sentence splitter, TTS sanitiser |
+| `tts.py` | Kokoro speech, swapped in behind `ohbot.say()` |
 | `robot.py` | Speech, idle motion, eye-colour state, guaranteed `close()` |
 | `voice.py` | Mic capture + local Whisper transcription (only with `--voice`) |
 | `ohbot_chat.py` | The chat loop |
+
+### The voice
+
+Kokoro-82M replaces the macOS `say` voice and is **also faster**: 0.62 s to generate a 4.5 s
+utterance versus 1.25 s for `say` (7.2× realtime on Apple Silicon). Model files live in `models/`
+and are git-ignored.
+
+Swapping the engine looks like it should break lip sync, since `ohbot.say()` does synthesis and
+lip movement together. It doesn't — **on macOS the lip is driven by loudness, not phonemes.**
+`say()` opens the generated WAV, sums sample bytes in chunks of `framerate/10`, normalises to 0–10
+and feeds that envelope to the lip motor. Actual phoneme data is used only on Raspberry Pi, where
+`synthesizer == "festival"`.
+
+So `tts.py` only has to replace one function, `_generateSpeechFile(text)`, and write a WAV where
+ohbot expects one. Viseme calculation, threading and playback are untouched. Two constraints come
+from that same envelope code, and both are handled:
+
+- It indexes `buffer[i] + buffer[i+1]*256`, so the WAV **must be 16-bit PCM** — Kokoro emits float32.
+- It loops `range(0, length - chunk, chunk)`, so audio under ~0.2 s yields an empty list and
+  `say()` then raises `IndexError` on `times[-1]`. Every clip gets 0.3 s of trailing silence, which
+  is why a one-word reply doesn't crash.
+
+If Kokoro fails for any reason, the chat falls back to `say` with a warning rather than exiting.
 
 ### Why it's built this way
 
@@ -143,6 +184,7 @@ Index 4 is unused. Address motors by constant or by number.
 | `helloworldohbot.py` | Movement + speech demo |
 | `requirements.txt` | Pinned dependency set |
 | `ohbotData/` | Auto-created on first run; **git-ignored** |
+| `models/` | Kokoro model files, fetched by `setup_demo.py`; **git-ignored** |
 
 `ohbotData/` holds `MotorDefinitionsv21.omd` (motor min/max/range — tune here if a servo
 strains at its range ends), `OhbotSpeech.csv`, and `Sounds/`. Deleting it restores library
