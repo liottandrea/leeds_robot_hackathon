@@ -48,12 +48,20 @@ SAD_CASES = {c[0] for c in CASES[:4]}
 GOOD_CASES = {c[0] for c in CASES[4:7]}
 
 
-def semantic_check(model, host, verbose=True):
+def semantic_check(model, host, verbose=True, repeats=1):
+    """Score emotion choice. Repeats matter: the model is stochastic, so a
+    single pass is a sample, not a measurement -- at temperature 0.7 the same
+    12 cases scored 12/12 on one run and 10/12 on the next."""
     convo_system = llm.SYSTEM_PROMPT
     hits, tone_misses, invalid, times = 0, [], [], []
+    # Kept so the robot phase performs exactly what was scored here, rather
+    # than asking the model again and possibly getting different choices.
+    scored = []
 
-    print("\n1. SEMANTIC -- does the emotion fit the sentiment?\n")
-    for prompt, acceptable in CASES:
+    print("\n1. SEMANTIC -- does the emotion fit the sentiment?"
+          "   ({} run(s) per case)\n".format(repeats))
+    per_case = {}
+    for prompt, acceptable in [c for c in CASES for _ in range(repeats)]:
         # Fresh conversation each time: we're testing the mapping, not memory.
         convo = llm.Conversation(model=model, system=convo_system, host=host)
         t0 = time.time()
@@ -76,35 +84,64 @@ def semantic_check(model, host, verbose=True):
 
         ok = emotion in acceptable
         hits += ok
+        per_case.setdefault(prompt, []).append((ok, emotion, gesture))
         if prompt in SAD_CASES and gesture in BAD_ON_SAD:
             tone_misses.append((prompt, gesture, "bouncy gesture on bad news"))
         elif prompt in GOOD_CASES and gesture in BAD_ON_GOOD:
             tone_misses.append((prompt, gesture, "negative gesture on good news"))
 
+        if len(per_case[prompt]) == 1:
+            scored.append((prompt, action))
+
         if verbose:
             print("  {} {:5.2f}s  {:<40} -> {:<12} {}".format(
                 "PASS" if ok else "MISS", elapsed, prompt[:38], emotion, gesture))
 
-    n = len(CASES)
+    # Flag cases that are unstable across runs -- those are the ones that will
+    # embarrass you on stage, not the ones that are consistently wrong.
+    unstable = {p: v for p, v in per_case.items()
+                if len({e for _, e, _ in v}) > 1}
+
+    n = len(CASES) * repeats
     print("\n  emotion accuracy : {}/{}  ({:.0f}%)".format(hits, n, 100 * hits / n))
     print("  median latency   : {:.2f}s".format(sorted(times)[n // 2]))
     print("  schema violations: {}".format(len(invalid)))
     print("  gesture tone misses: {}".format(len(tone_misses)))
+    if repeats > 1:
+        print("  unstable across runs: {}/{} cases".format(len(unstable), len(CASES)))
+        for prompt, runs in unstable.items():
+            print("      {!r} -> {}".format(
+                prompt[:38], ", ".join(sorted({e for _, e, _ in runs}))))
     if tone_misses:
         for prompt, g, why in tone_misses:
             print("      {!r} -> {}  ({})".format(prompt[:38], g, why))
-    return {"accuracy": hits / n, "invalid": invalid, "tone_misses": tone_misses}
+    return {
+        "accuracy": hits / n,
+        "invalid": invalid,
+        "tone_misses": tone_misses,
+        "scored": scored,
+        "unstable": unstable,
+    }
 
 
-def mechanical_check():
-    """On-hardware checks: concurrency, mouth ownership, and reaction latency."""
+def mechanical_check(scored, pause=1.5):
+    """Perform every scored case on the robot, so you can watch them all.
+
+    Replays the exact emotion and gesture that were scored above, announcing
+    each one so it's obvious when a new case starts. Concurrency is measured
+    across every utterance, not just a sample -- a gesture that overlaps on one
+    case and not another is exactly the kind of intermittent fault a single
+    sample hides.
+    """
     import audio
     import config as config_mod
     import tts
     from ohbot import ohbot
     from robot import Ohbot
 
-    print("\n2. MECHANICAL -- on the robot\n")
+    print("\n2. MECHANICAL -- performing all {} cases on the robot".format(len(scored)))
+    print("   Watch the face. Each case is announced first.\n")
+
     cfg = config_mod.load(warn=False)
     try:
         audio.install_output(audio.resolve(cfg.get("audio.output_device"), audio.OUTPUT))
@@ -119,39 +156,78 @@ def mechanical_check():
         events.append((time.time(), m))
         return original_move(m, pos, spd, eye)
 
+    mouth = {expression.TOPLIP, expression.BOTTOMLIP}
+    results = []
+
     ohbot.move = logged
     try:
         with Ohbot(idle=True) as bot:
-            time.sleep(0.4)
-            events.clear()
-            t0 = time.time()
-            bot.speak(
-                "I am really sorry to hear that, it sounds like a very hard day.",
-                emotion="sympathetic",
-                gesture="slow_nod",
-            )
-            t1 = time.time()
+            for i, (prompt, action) in enumerate(scored, 1):
+                emotion = action.get("emotion", "neutral")
+                gesture = action.get("gesture", "blink")
+
+                # Return to a clean slate so the next expression is a visible
+                # change rather than a drift from the previous one.
+                bot.express("neutral")
+                bot.set_state("listening")
+                time.sleep(pause)
+
+                print("  [{:2}/{}] {}".format(i, len(scored), prompt))
+                print("         -> {} / {}".format(emotion, gesture))
+
+                # Spoken marker, deliberately flat, so the emotional delivery
+                # that follows is unmistakably the robot's response.
+                bot.speak("Test {}.".format(i))
+                time.sleep(0.4)
+
+                # The scenario, so an observer knows what it is reacting to.
+                bot.set_state("thinking")
+                bot.speak("They said: {}".format(prompt))
+                time.sleep(0.5)
+
+                events.clear()
+                t0 = time.time()
+                bot.gaze(action.get("gaze_x", 5), action.get("gaze_y", 5))
+                bot.speak(action["say"], emotion=emotion, gesture=gesture)
+                t1 = time.time()
+
+                during = [(t, m) for t, m in events if t0 < t < t1]
+                lip = [e for e in during if e[1] in mouth]
+                gest = [e for e in during if e[1] not in mouth]
+                overlapped = bool(lip and gest)
+                results.append(
+                    {"prompt": prompt, "emotion": emotion, "gesture": gesture,
+                     "lip": len(lip), "gest": len(gest), "overlap": overlapped,
+                     "seconds": t1 - t0}
+                )
+                print("         {}  {:.1f}s  lip={} gesture={}\n".format(
+                    "overlap OK" if overlapped else "NO OVERLAP",
+                    t1 - t0, len(lip), len(gest)))
+
+            bot.express("neutral")
+            bot.speak("That is all twelve tests.", emotion="happy", gesture="nod")
     finally:
         ohbot.move = original_move
 
-    mouth = {expression.TOPLIP, expression.BOTTOMLIP}
-    during = [(t, m) for t, m in events if t0 < t < t1]
-    lip = [e for e in during if e[1] in mouth]
-    gest = [e for e in during if e[1] not in mouth]
+    overlaps = sum(r["overlap"] for r in results)
+    total_lip = sum(r["lip"] for r in results)
+    total_gest = sum(r["gest"] for r in results)
 
-    print("  speech window            : {:.2f}s".format(t1 - t0))
-    print("  lip-sync moves during    : {}".format(len(lip)))
-    print("  gesture moves during     : {}".format(len(gest)))
-    if gest:
-        print("  gesture spanned          : +{:.2f}s to +{:.2f}s".format(
-            gest[0][0] - t0, gest[-1][0] - t0))
+    print("  cases with gesture overlapping speech : {}/{}".format(overlaps, len(results)))
+    print("  total lip-sync moves                  : {}".format(total_lip))
+    print("  total gesture moves                   : {}".format(total_gest))
 
-    concurrent = bool(lip and gest)
-    print("\n  {} gesture and lip sync overlapped".format(
-        "PASS --" if concurrent else "FAIL -- no overlap:"))
-    if not concurrent:
-        print("        the robot is posing before speaking, not moving while it speaks.")
-    return {"concurrent": concurrent, "lip": len(lip), "gesture": len(gest)}
+    silent = [r for r in results if not r["gest"]]
+    if silent:
+        print("\n  cases where NOTHING moved during speech:")
+        for r in silent:
+            print("      {!r} ({})".format(r["prompt"][:40], r["gesture"]))
+
+    ok = overlaps == len(results)
+    print("\n  {} gesture and lip sync overlapped on {}".format(
+        "PASS --" if ok else "FAIL --", "every case" if ok else
+        "only {} of {} cases".format(overlaps, len(results))))
+    return {"concurrent": ok, "results": results}
 
 
 CHECKLIST = """
@@ -174,7 +250,19 @@ follow from a mechanical one rather than from the pose design.
 
 def main():
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--robot", action="store_true", help="also run on-hardware checks")
+    p.add_argument(
+        "--robot",
+        action="store_true",
+        help="perform every case on the robot so you can watch them",
+    )
+    p.add_argument(
+        "--pause",
+        type=float,
+        default=1.5,
+        help="seconds held at neutral between cases (default 1.5)",
+    )
+    p.add_argument("--repeats", type=int, default=1,
+                   help="runs per case; >1 exposes run-to-run instability")
     p.add_argument("--model", default=None)
     args = p.parse_args()
 
@@ -194,15 +282,26 @@ def main():
         print(e, file=sys.stderr)
         return 1
 
-    sem = semantic_check(model, host)
-    mech = mechanical_check() if args.robot else None
+    sem = semantic_check(model, host, repeats=args.repeats)
+    mech = None
+    if args.robot and sem:
+        mech = mechanical_check(sem["scored"], pause=args.pause)
 
     print(CHECKLIST)
 
     print("=" * 60)
     failed = []
-    if sem is None or sem["accuracy"] < 0.75:
-        failed.append("emotion accuracy below 75%")
+    # Distinguish "the model is unreachable" from "the model chose badly".
+    # Reporting an Ollama outage as low accuracy sends you debugging prompts
+    # when the actual problem is that the server isn't running.
+    if sem is None:
+        failed.append("could not reach the model -- no scores were produced")
+    elif sem["accuracy"] < 0.75:
+        failed.append(
+            "emotion accuracy {:.0f}%, below the 75% threshold".format(
+                100 * sem["accuracy"]
+            )
+        )
     if sem and sem["invalid"]:
         failed.append("schema not binding -- values outside the enum")
     if mech and not mech["concurrent"]:

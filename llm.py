@@ -38,6 +38,9 @@ That is the maximum length you should ever use."""
 # code: generation is capped and only the first few sentences are ever spoken.
 MAX_SENTENCES = 3
 
+# Used for structured emotion/gesture selection. See respond_with_action.
+ACTION_TEMPERATURE = 0.3
+
 # Sentence-ish boundary: terminator followed by whitespace. The digit lookbehind
 # stops "1. France 2. Spain" and decimals like "3.5" splitting into fragments.
 _SENTENCE_END = re.compile(r"(?<=[.!?])(?<![0-9].)\s+")
@@ -225,7 +228,7 @@ class Conversation:
 
     # -- structured "act as you speak" mode --------------------------------
 
-    def respond_with_action(self, user_text, emotions, gestures):
+    def respond_with_action(self, user_text, emotions, gestures, temperature=None):
         """Get a reply plus the emotion and gesture to perform with it.
 
         Uses Ollama's `format` JSON-schema mode rather than the tools API.
@@ -270,7 +273,14 @@ class Conversation:
                     "stream": False,
                     "format": schema,
                     "options": {
-                        "temperature": self.temperature,
+                        # Cooler than plain chat on purpose. Picking the right
+                        # emotion is a classification, not a creative act: at
+                        # 0.7 the same input scored 12/12 on one run and 10/12
+                        # on the next, with "what is two plus two?" drawing
+                        # `excited`. Lower temperature stabilises the choice.
+                        "temperature": (
+                            ACTION_TEMPERATURE if temperature is None else temperature
+                        ),
                         "num_predict": self.num_predict,
                     },
                 },
