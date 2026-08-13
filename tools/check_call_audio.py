@@ -86,12 +86,13 @@ def mono(block):
 # -- checks ---------------------------------------------------------------
 
 
-def resolve_devices(cfg):
+def resolve_devices(cfg, overrides=None):
     """Turn the configured names into indices. Returns (in_idx, out_idx)."""
     section("Devices")
+    overrides = overrides or {}
     found = {}
     for key, kind in (("audio.input_device", audio.INPUT), ("audio.output_device", audio.OUTPUT)):
-        name = cfg.get(key)
+        name = overrides.get(kind) or cfg.get(key)
         try:
             index = audio.resolve(name, kind)
             found[kind] = index
@@ -112,12 +113,14 @@ def resolve_devices(cfg):
     return found.get(audio.INPUT), found.get(audio.OUTPUT)
 
 
+def is_virtual(name):
+    return any(v in (name or "").lower() for v in VIRTUAL)
+
+
 def check_virtual_installed():
     section("Virtual cable")
     names = [d["name"].lower() for d in sd.query_devices()]
-    present = sorted(
-        {d["name"] for d in sd.query_devices() if any(v in d["name"].lower() for v in VIRTUAL)}
-    )
+    present = sorted({d["name"] for d in sd.query_devices() if is_virtual(d["name"])})
     return report(
         "a virtual audio device exists",
         bool(present),
@@ -128,6 +131,49 @@ def check_virtual_installed():
         "Windows: install VB-CABLE, then reboot\n"
         "Then build the Multi-Output devices described in docs/TEAMS.md",
     )
+
+
+def check_config_points_at_cables(cfg, in_idx, out_idx):
+    """Installing BlackHole changes nothing until config points at it.
+
+    Worth its own check because the failure downstream is indistinguishable from
+    a broken cable: the robot listens to a headset nobody is talking into and
+    reports silence, having never touched the call at all.
+    """
+    section("Config is pointed at the cable")
+    ok = True
+    for label, index, hint in (
+        (
+            "input_device",
+            in_idx,
+            "the Multi-Output that Teams' speaker feeds, or an\n"
+            "Aggregate Device combining that with your microphone",
+        ),
+        (
+            "output_device",
+            out_idx,
+            "a Multi-Output containing the BlackHole that Teams\nuses as its microphone",
+        ),
+    ):
+        name = audio.device_name(index)
+        # A user-named Multi-Output ("Ohbot Voice") is not detectable by name, so
+        # treat a bare BlackHole and a combined device the same way: the check is
+        # only whether config still names real hardware.
+        physical = not is_virtual(name) and index is not None
+        ok = (
+            report(
+                f"{label} = {name}",
+                not physical,
+                ""
+                if not physical
+                else f"That is a real microphone or speaker, not a cable. It should be\n{hint}.\n"
+                "Nothing about the call reaches the robot until this changes:\n"
+                "edit config.local.yaml, see docs/TEAMS.md step 4.",
+                level=WARNING,
+            )
+            and ok
+        )
+    return ok
 
 
 def check_input_shape(cfg, in_idx):
@@ -214,15 +260,26 @@ def check_audio_arrives(in_idx, seconds):
                 "is talking."
             )
 
-    return report(
-        "audio arrives",
-        peak > FLOOR,
-        detail
-        if peak > FLOOR
-        else detail + "\nNothing but digital silence. The cable is not carrying the call.\n"
-        "Check Teams > Settings > Devices: Speaker must be the Multi-Output that\n"
-        "contains BlackHole, and this input must be that same BlackHole.",
-    )
+    if peak > FLOOR:
+        return report("audio arrives", True, detail)
+
+    # Two very different failures look identical here, so name whichever it is
+    # rather than blaming the cable for a device that is not one.
+    if not is_virtual(info["name"]):
+        why = (
+            f"\nNothing arrived, but {info['name']} is a real microphone, not a cable --\n"
+            "so this test only proved nobody spoke into it. Point audio.input_device\n"
+            "at the BlackHole side first: docs/TEAMS.md step 4."
+        )
+    else:
+        why = (
+            "\nNothing but digital silence, and this IS the cable, so nothing is feeding it.\n"
+            "Whatever should be playing into it is pointed elsewhere: check Teams >\n"
+            "Settings > Devices, where Speaker must be the Multi-Output containing this\n"
+            "BlackHole. To test without Teams at all, set the macOS system output to\n"
+            "this device and play a video."
+        )
+    return report("audio arrives", False, detail + why)
 
 
 def check_no_self_hearing(in_idx, out_idx):
@@ -280,13 +337,18 @@ def main():
         "--seconds", type=float, default=6.0, help="how long to listen for incoming audio"
     )
     p.add_argument("--config", default="config.yaml")
+    # Overrides so you can try a routing before committing it to config.local.yaml
+    # -- worth having, because most of setting this up is trying things.
+    p.add_argument("--input", default=None, help='input device name, e.g. "BlackHole 2ch"')
+    p.add_argument("--output", default=None, help="output device name")
     args = p.parse_args()
 
     cfg = config_mod.load(args.config, warn=False)
     print("Checking call audio. Config: {}".format(", ".join(cfg.sources) or "defaults"))
 
-    in_idx, out_idx = resolve_devices(cfg)
+    in_idx, out_idx = resolve_devices(cfg, {audio.INPUT: args.input, audio.OUTPUT: args.output})
     check_virtual_installed()
+    check_config_points_at_cables(cfg, in_idx, out_idx)
     check_input_shape(cfg, in_idx)
     check_audio_arrives(in_idx, args.seconds)
     check_no_self_hearing(in_idx, out_idx)

@@ -16,8 +16,6 @@ repos:
     hooks:
       - id: mypy
         files: ^ohbot_kit/
-        # call.py is work in progress; see pyproject.toml
-        exclude: ^ohbot_kit/call\.py$
         additional_dependencies: [types-PyYAML]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks

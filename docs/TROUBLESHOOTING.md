@@ -89,6 +89,34 @@ The model files are missing. `python tools/check_setup.py` downloads them (~336 
 `models/`. The demo still runs on the built-in voice meanwhile — deliberately, since a
 worse-sounding demo beats no demo.
 
+## `PermissionError: [Errno 1] Operation not permitted` loading the speech model
+
+A long traceback ending in `ssl.create_default_context(cafile=os.environ["SSL_CERT_FILE"])`.
+Nothing to do with the robot, and nothing to do with the model being missing.
+
+Whisper checks HuggingFace for a newer copy **even when the model is already cached**, and
+building the HTTPS client reads the certificate bundle in `$SSL_CERT_FILE`. On a
+corporate-proxy setup (Zscaler and friends) that bundle usually lives under `~/Documents`,
+which macOS protects — so your terminal is denied and the read fails with `EPERM`
+(`Operation not permitted`) rather than a normal permission error.
+
+The fix is to stop it reaching out at all, which is what this kit wants anyway:
+
+```bash
+export HF_HUB_OFFLINE=1          # add it to ~/.zshrc
+```
+
+The model then loads straight from `~/.cache/huggingface/hub`. Confirm you have it:
+
+```bash
+ls ~/.cache/huggingface/hub | grep faster-whisper
+```
+
+If it isn't cached yet, run `python tools/check_setup.py` **with `HF_HUB_OFFLINE` unset** once
+to download it. The two other fixes, if you'd rather keep it online: grant your terminal Full
+Disk Access in System Settings → Privacy & Security, or move the cert somewhere outside
+`~/Documents` and update `SSL_CERT_FILE`.
+
 ## Ollama errors
 
 - `Cannot reach Ollama` → start it: `ollama serve`

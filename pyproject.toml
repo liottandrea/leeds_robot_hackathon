@@ -57,8 +57,6 @@ ignore = [
 [tool.mypy]
 python_version = "3.11"
 files = ["ohbot_kit"]
-# call.py is work-in-progress by another author; exclude until it is annotated.
-exclude = ["ohbot_kit/call\\.py$"]
 disallow_untyped_defs = true
 disallow_incomplete_defs = true
 warn_redundant_casts = true

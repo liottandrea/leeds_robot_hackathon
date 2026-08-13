@@ -10,7 +10,11 @@ Everything you normally need, from one import:
 
 The submodules are still there when you want them:
 
-    from ohbot_kit import expression, voice, audio, tts
+    from ohbot_kit import audio, call, expression, tts, voice
+
+`voice` and `call` are deliberately not re-exported above: importing them pulls
+in the speech model stack, which is pure cost for a typed chat. Import them
+directly when you need them.
 
 IMPORTANT: run your scripts from the repository root. The ohbot library
 resolves its ohbotData/ folder (motor calibration, speech database, sounds)

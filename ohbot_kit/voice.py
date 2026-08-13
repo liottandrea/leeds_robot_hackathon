@@ -16,7 +16,6 @@ from typing import Any
 
 import numpy as np
 import sounddevice as sd
-from faster_whisper import WhisperModel
 
 SAMPLE_RATE = 16000
 BLOCK = 1024  # ~64 ms per block
@@ -66,6 +65,11 @@ class Listener:
         min_speech_seconds: float = MIN_SPEECH_SECONDS,
         noise_multiplier: float = NOISE_MULTIPLIER,
     ) -> None:
+        # Imported here rather than at module level: faster_whisper pulls in
+        # ctranslate2, which costs seconds of import time and is pure waste for
+        # anyone running the typed chat. tts.py defers Kokoro the same way.
+        from faster_whisper import WhisperModel
+
         print(f"Loading speech model ({model_size})...", flush=True)
         # int8 on CPU is the fast path on Apple Silicon.
         self.model = WhisperModel(model_size, device="cpu", compute_type="int8")

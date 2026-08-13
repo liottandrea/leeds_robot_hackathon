@@ -119,9 +119,42 @@ Aggregate Device it belongs to.
 python tools/check_call_audio.py
 ```
 
-It resolves the device names, compares the channel count against your config,
-listens for real audio arriving, and confirms the robot's voice doesn't come back
-into its own ears. Run it with the call already open and someone talking.
+It resolves the device names, checks they are cables rather than your headset,
+compares the channel count against your config, listens for real audio arriving,
+and confirms the robot's voice doesn't come back into its own ears. Run it with
+the call already open and someone talking.
+
+---
+
+## Test it without Teams first
+
+Worth doing before any of the above. This proves the whole chain — cable, 48 kHz
+resampling, Whisper, the LLM, the robot's voice — with no meeting and no Audio
+MIDI Setup, so when something breaks later you know it isn't this part.
+
+1. Set the macOS **system output** to `BlackHole 2ch` (Sound settings, or
+   option-click the volume icon). You will stop hearing your machine — expected,
+   everything is going down the cable now.
+2. Play anything with speech in it: a YouTube video, a podcast.
+3. Both commands take device overrides, so nothing in your config needs touching:
+
+```bash
+python tools/check_call_audio.py --input "BlackHole 2ch" --output "MacBook Pro Speakers"
+python examples/10_teams_call.py --input "BlackHole 2ch" --output "MacBook Pro Speakers" --open-mic
+```
+
+The diagnostic should report `[PASS] audio arrives`, and the example should print
+transcripts of the video as it plays. `--open-mic` because a video won't say
+"Ohbot" for you. It answers out of the laptop speakers, not the cable, so you can
+hear it.
+
+Then put the system output back, and go build the real routing.
+
+### Testing the real thing on your own
+
+You need a second participant to talk. Start a **Meet now** meeting on the laptop
+and join it again from your phone — the phone is a real remote participant, so
+audio from it travels the actual path Teams will use on a real call.
 
 ---
 
