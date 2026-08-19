@@ -145,7 +145,11 @@ def resample_to_whisper(audio: NDArray[Any], capture_rate: int) -> NDArray[Any]:
 
 def resolve_channels(channels: int | str | None, info: Mapping[str, Any]) -> int:
     """How many channels to read: an explicit count, or all the device has."""
-    if channels in (None, "all", "auto"):
+    # `is None` is spelled out rather than folded into the tuple below because
+    # mypy 1.19 (the pinned version, and what CI runs) does not narrow None out
+    # of `channels in (None, ...)`, so the int() call reads as int(None) and
+    # fails the type check. Newer mypy narrows it and passes either way.
+    if channels is None or channels in ("all", "auto"):
         return max(1, int(info.get("max_input_channels", 1)))
     return max(1, int(channels))
 

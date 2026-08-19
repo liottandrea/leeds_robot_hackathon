@@ -5,5 +5,5 @@
 ruff==0.14.5
 mypy==1.19.1
 pytest==9.0.1
-pytest-cov==8.0.0
+pytest-cov==7.1.0
 pre-commit==4.4.0
