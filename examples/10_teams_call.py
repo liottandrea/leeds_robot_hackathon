@@ -101,6 +101,8 @@ def main():
     )
     convo.warm_up()
 
+    unaddressed = 0
+
     with Ohbot(**robot_kwargs) as bot:
         bot.express("curious")  # awake, but silent -- no greeting
         listener.calibrate()
@@ -123,7 +125,22 @@ def main():
                 else:
                     request = wake_word(text, words)
                     if request is None:
-                        print(f"call: {text}")
+                        # Staying silent here is the correct behaviour, and it is
+                        # indistinguishable from being broken. Say why, twice,
+                        # then stop cluttering the transcript.
+                        unaddressed += 1
+                        if unaddressed <= 2:
+                            print(
+                                f"call: {text}\n"
+                                f'      ^ heard, but not addressed. Say "{words[-1]}, '
+                                'what day is it?" to get an answer,\n'
+                                "        or restart with --open-mic to reply to everything. "
+                                "If the name above\n"
+                                "        came out mangled, use --wake with a word Whisper "
+                                "hears reliably."
+                            )
+                        else:
+                            print(f"call: {text}")
                         continue  # not for us; keep listening
                     if not request:
                         request = "Someone said your name. Ask what they need."

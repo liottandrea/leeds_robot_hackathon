@@ -158,6 +158,38 @@ audio from it travels the actual path Teams will use on a real call.
 
 ---
 
+## A real call with no Audio MIDI Setup at all
+
+The two Multi-Output devices above exist for one reason: so **you, in the room**,
+can hear the call and the robot. The call itself does not need them. Skip them
+entirely and use your phone as both your ears and your mouth:
+
+| Where | Setting |
+| --- | --- |
+| Teams → Devices | Speaker = `BlackHole 2ch`, Mic = `BlackHole 16ch`, noise suppression **Off** |
+| Your phone | joined to the same meeting — you talk into it, you hear Ohbot out of it |
+
+```bash
+python examples/10_teams_call.py --input "BlackHole 2ch" --output "BlackHole 16ch"
+```
+
+That is the complete loop: the call arrives on `BlackHole 2ch`, the robot answers
+into `BlackHole 16ch`, and Teams sends that to everyone. The laptop itself goes
+silent, which is the trade — you hear the meeting through the phone instead.
+
+Get this working first. Then, if you want the room to hear it too, build the
+Multi-Output devices and swap the two names for `Teams Out` and `Ohbot Voice`.
+Nothing else changes.
+
+> Don't reverse those two. `BlackHole 16ch` is fine for the robot's **voice**, but
+> makes a poor pair of **ears**: Teams writes to two of its sixteen channels and
+> `channels: all` averages across all of them, so the call arrives eight times
+> quieter and lands under the threshold. The robot then reports audio arriving but
+> too quiet — accurate, but avoidable. Listen on `BlackHole 2ch`, where both
+> channels carry.
+
+---
+
 ## Windows
 
 Same shape, different parts: install [VB-CABLE](https://vb-audio.com/Cable/) twice
