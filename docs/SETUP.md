@@ -48,6 +48,22 @@ python tools/check_setup.py
 **5. Grant microphone access** (only needed for voice input): System Settings → Privacy &
 Security → Microphone → enable your terminal, then **restart the terminal**.
 
+**6. Only if you want `09_vision.py`** — it is the one example that needs more than
+`phi4-mini`:
+
+```bash
+ollama pull moondream    # 1.7 GB. Small on purpose: it answers in ~1s
+```
+
+Then grant camera access the same way: System Settings → Privacy & Security → **Camera**
+→ enable the app you run Python from, and restart it. Until you do, OpenCV reports
+`not authorized to capture video` and then a camera that won't open, which looks like
+broken hardware rather than a permission. `python tools/check_setup.py` tells you which
+of the two is missing.
+
+> Grant it to the app that *hosts* your terminal. Running inside VS Code's terminal means
+> granting **VS Code**, not Terminal.app — the permission follows the parent application.
+
 ---
 
 ## Windows

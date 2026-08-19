@@ -76,6 +76,12 @@ _SPACES = re.compile(r"\s+")
 
 WAKE_WORDS = ("hey ohbot", "hi ohbot", "okay ohbot", "ok ohbot", "ohbot")
 
+# How long to wait in silence before saying so. An unwired cable and a call
+# nobody has spoken on yet are indistinguishable from inside the loop, and the
+# robot blinks and nods through both, so silence has to be reported rather than
+# left to look like patience.
+QUIET_HINT_SECONDS = 12.0
+
 
 def wake_word(text: str | None, words: Iterable[str] = WAKE_WORDS) -> str | None:
     """Split an utterance into (was I addressed?, what was asked).
@@ -139,7 +145,11 @@ def resample_to_whisper(audio: NDArray[Any], capture_rate: int) -> NDArray[Any]:
 
 def resolve_channels(channels: int | str | None, info: Mapping[str, Any]) -> int:
     """How many channels to read: an explicit count, or all the device has."""
-    if channels in (None, "all", "auto"):
+    # `is None` is spelled out rather than folded into the tuple below because
+    # mypy 1.19 (the pinned version, and what CI runs) does not narrow None out
+    # of `channels in (None, ...)`, so the int() call reads as int(None) and
+    # fails the type check. Newer mypy narrows it and passes either way.
+    if channels is None or channels in ("all", "auto"):
         return max(1, int(info.get("max_input_channels", 1)))
     return max(1, int(channels))
 
@@ -203,6 +213,26 @@ class CallListener(Listener):
     def _to_whisper_rate(self, audio: NDArray[Any]) -> NDArray[Any]:
         return resample_to_whisper(audio, self.capture_rate)
 
+    def _report_quiet(self, loudest: float) -> None:
+        """Explain a long silence, telling a dead cable from a quiet call."""
+        name = self._device_info().get("name", "the input device")
+        if loudest <= FLOOR:
+            print(
+                f"[call] {QUIET_HINT_SECONDS}s of digital silence on {name} "
+                f"(loudest {loudest:.5f}).\n"
+                "       Nothing is feeding it. On a call, the meeting app's SPEAKER must be a\n"
+                "       Multi-Output containing this device -- see docs/TEAMS.md. To test with\n"
+                "       no call at all, set the system output to it and play a video.",
+                flush=True,
+            )
+        else:
+            print(
+                f"[call] audio is arriving on {name} but stays below the threshold "
+                f"(loudest {loudest:.5f}, threshold {self.threshold:.5f}). Turn the source "
+                "up, or lower speech_to_text.noise_multiplier.",
+                flush=True,
+            )
+
     def calibrate(self) -> None:
         """Measure the noise floor of the cable.
 
@@ -245,6 +275,14 @@ class CallListener(Listener):
         silence_limit = max(1, int(self.silence_seconds / block_seconds))
         max_frames = max(1, int(MAX_UTTERANCE_SECONDS / block_seconds))
 
+        # A cable that is not wired up looks exactly like a call where nobody
+        # has spoken yet: this loop just blocks. Meanwhile the robot blinks and
+        # backchannel-nods, so it reads as "working, listening" when it may in
+        # fact be plugged into nothing. Say so instead of waiting in silence.
+        hint_blocks = max(1, int(QUIET_HINT_SECONDS / block_seconds))
+        waited = 0
+        loudest = 0.0
+
         with self._stream() as stream:
             while True:
                 block, overflowed = stream.read(BLOCK)
@@ -259,13 +297,24 @@ class CallListener(Listener):
                     frames, started, speech_frames, silence_frames = [], False, 0, 0
                     continue
 
-                loud = _rms(mono) > self.threshold
+                level = _rms(mono)
+                loud = level > self.threshold
 
                 if not started:
                     if loud:
                         started = True
                         frames.append(mono)
                         speech_frames = 1
+                        waited = 0
+                        loudest = 0.0
+                        continue
+
+                    loudest = max(loudest, level)
+                    waited += 1
+                    if waited >= hint_blocks:
+                        self._report_quiet(loudest)
+                        waited = 0
+                        loudest = 0.0
                     continue
 
                 frames.append(mono)

@@ -274,6 +274,41 @@ class TestCallListener:
         expected = (20 + silence_limit) * BLOCK / 3
         assert len(audio) == pytest.approx(expected, rel=0.02)
 
+    def test_says_so_when_the_cable_is_dead(
+        self, listener: Any, streamed: Any, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """An unwired cable and a call nobody has spoken on look identical from
+        in here, and the robot blinks and nods through both -- so it reads as
+        working when it may be plugged into nothing. It has to say so."""
+        hint_blocks = int(call.QUIET_HINT_SECONDS / (BLOCK / listener.capture_rate))
+        # Silence for long enough to warrant a hint, then a real utterance so
+        # record_utterance returns instead of blocking.
+        streamed([quiet(3)] * (hint_blocks + 1) + [loud(3)] * 20 + [quiet(3)] * 60, 3)
+
+        listener.record_utterance()
+
+        out = capsys.readouterr().out
+        assert "digital silence" in out
+        assert AGGREGATE in out, "must name the device that is silent"
+        assert "docs/TEAMS.md" in out, "must point at the fix"
+
+    def test_quiet_but_present_audio_is_reported_differently(
+        self, listener: Any, streamed: Any, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Audio arriving too quietly is a threshold problem, not a wiring one,
+        and sending someone to rebuild their routing would waste their time."""
+        hint_blocks = int(call.QUIET_HINT_SECONDS / (BLOCK / listener.capture_rate))
+        listener.threshold = 0.4
+        faint = [loud(3, level=0.05)] * (hint_blocks + 1)
+        streamed(faint + [loud(3, level=0.9)] * 20 + [quiet(3)] * 60, 3)
+
+        listener.record_utterance()
+
+        out = capsys.readouterr().out
+        assert "below the threshold" in out
+        assert "noise_multiplier" in out
+        assert "digital silence" not in out
+
     def test_a_cough_is_not_an_utterance(self, listener: Any, streamed: Any) -> None:
         streamed([loud(3)] * 3 + [quiet(3)] * 60, listener.channels)
         assert listener.record_utterance() is None

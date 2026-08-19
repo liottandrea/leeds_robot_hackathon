@@ -24,7 +24,9 @@ Full instructions, including Windows: **[docs/SETUP.md](docs/SETUP.md)**
 ```bash
 uv venv --python 3.11 && source .venv/bin/activate
 uv pip install -r requirements.txt
-ollama serve &  &&  ollama pull phi4-mini
+
+ollama serve &                     # leave it running
+ollama pull phi4-mini              # 2.5 GB
 
 python tools/check_setup.py        # downloads models, warms up, checks everything
 python examples/01_hello_robot.py  # it should move and talk
@@ -57,7 +59,7 @@ python my_project.py
 | --- | --- |
 | **[docs/API.md](docs/API.md)** | Every call, pose, gesture and motor. Keep it open. |
 | **[docs/CHALLENGES.md](docs/CHALLENGES.md)** | Project ideas, easy → ambitious, if you're still deciding |
-| [docs/TEAMS.md](docs/TEAMS.md) | Put the robot in a Teams call: it listens, and speaks when named |
+| [docs/TEAMS.md](docs/TEAMS.md) | Put the robot in a Teams call: it listens, and speaks when named. Works with you on a second device; sharing one Mac with it is WIP |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Every failure we hit, and its fix |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How it works, and why some odd-looking things are load-bearing |
 
@@ -75,9 +77,13 @@ Numbered in the order worth reading them.
 | `06_voice_chat.py` | talk to it with your voice |
 | `07_sensors.py` | react to someone approaching |
 | **`08_empathy_chat.py`** | **the flagship** — reacts with face and body, not just words |
-| `09_vision.py` | webcam + a vision model: it describes what it sees |
+| `09_vision.py` | webcam + a vision model: it describes what it sees — needs `ollama pull moondream` |
 | `11_multi_beat.py` | expression that changes *within* a single reply |
 | `10_teams_call.py` | it sits in a Teams call and answers when named — [docs/TEAMS.md](docs/TEAMS.md) |
+
+`09_vision.py` is the only example needing anything extra: a vision model
+(`ollama pull moondream`, 1.7 GB) and camera permission. `python tools/check_setup.py`
+reports on both. Everything else runs with just `phi4-mini`.
 
 ## What it can do
 

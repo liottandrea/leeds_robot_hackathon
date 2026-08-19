@@ -6,8 +6,8 @@ Every failure below actually happened while building this kit. Start with:
 python tools/check_setup.py
 ```
 
-It checks the robot, Ollama, the models, the audio devices and the microphone, and
-names the fix for whatever is broken.
+It checks the robot, Ollama, the models, the audio devices, the microphone and the camera,
+and names the fix for whatever is broken.
 
 ---
 
@@ -65,6 +65,57 @@ hear the others. **Use a headset.** That is the only real fix in a shared room.
   That's expected; matching is direction-aware.
 - If output is set to your headset, the audience hears nothing. For a demo set
   `output_device` to the laptop speakers in `config.local.yaml`.
+
+## The camera won't open (`09_vision.py`)
+
+```text
+OpenCV: not authorized to capture video (status 0), requesting...
+OpenCV: camera failed to properly initialize!
+Could not open camera 0. Check macOS camera permission.
+```
+
+**This is a permission, not the camera.** Grant it in System Settings → Privacy &
+Security → **Camera**, then restart the app. `python tools/check_setup.py` distinguishes
+this from a missing vision model.
+
+**Grant it to the app that hosts your terminal**, which is not always Terminal.app. Run
+Python from VS Code's integrated terminal and the permission belongs to **VS Code** —
+macOS attributes it to the parent application. This cost us real time: the permission
+looked granted because Terminal.app had it, while the process asking was VS Code.
+
+Also worth checking: nothing else is holding the camera. Zoom, Teams and Photo Booth keep
+it open in the background, and only one process gets it.
+
+## The robot describes nothing, or reacts to `!!!`
+
+**Almost always the vision prompt, not the model.** `moondream` is 1.7 GB and it collapses
+if you ask it to act rather than describe. Measured at temperature 0, three identical runs
+each:
+
+| prompt | what moondream returned |
+| --- | --- |
+| `Describe this image, including any people in it.` | a clean, accurate caption |
+| …`as if you were a friendly robot looking at it.` | `!!!!!!!!!!!!!!` |
+| …`Mention people if there are any.` | empty string |
+| anything `in one short sentence` | first token missing — `urns of blue…` |
+
+So `09_vision.py` asks the vision model **only to describe**, and lets the chat model add
+the personality afterwards. If you add character back into `PROMPT`, expect this. Keep the
+captioning instruction plain and put your persona in `config.yaml` instead.
+
+An empty caption is reported as `nothing describable in that frame`, which is deliberately
+worded differently from `no frame from the camera` — one is the model, the other is the
+hardware, and they need different fixes.
+
+## `Class AVFFrameReceiver is implemented in both …` on startup
+
+A long `objc[…]` warning about duplicate classes ending "may cause spurious casting
+failures and mysterious crashes". **Harmless, and not caused by your code.**
+`opencv-python` and `av` (a Whisper dependency) each bundle their own copy of ffmpeg, and
+macOS notices when both load into one process. You only see it in scripts that use the
+camera *and* the microphone — `tools/check_setup.py`, or your own project combining
+`06_voice_chat.py` with `09_vision.py`. Both libraries work regardless; we have not seen
+it cause an actual failure. Ignore it.
 
 ## Motors buzzing after a crash
 
