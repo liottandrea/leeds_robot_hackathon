@@ -2,10 +2,20 @@
 
     python examples/10_teams_call.py
 
-Set the audio routing up FIRST -- ten minutes in Audio MIDI Setup, all of it in
-docs/TEAMS.md. Then check the cable is actually carrying audio:
+Set the audio routing up FIRST -- all of it in docs/TEAMS.md. Then check the cable
+is actually carrying audio:
 
     python tools/check_call_audio.py
+
+WHAT IS CONFIRMED WORKING
+
+Teams speaker BlackHole 2ch, Teams mic BlackHole 16ch, noise suppression off, and
+YOU on a second device -- your phone, joined to the same meeting. Then:
+
+    python examples/10_teams_call.py --input "BlackHole 2ch" --output "BlackHole 16ch"
+
+Being on the call from the same Mac as the robot is WIP: Teams has one microphone
+slot and the robot occupies it. See docs/TEAMS.md, "Being on the call too".
 
 Teams has no bot to install and does not need one. Teams only cares which audio
 devices it is pointed at, so Ohbot becomes the microphone and Teams' speaker

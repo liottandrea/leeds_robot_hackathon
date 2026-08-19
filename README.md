@@ -59,7 +59,7 @@ python my_project.py
 | --- | --- |
 | **[docs/API.md](docs/API.md)** | Every call, pose, gesture and motor. Keep it open. |
 | **[docs/CHALLENGES.md](docs/CHALLENGES.md)** | Project ideas, easy → ambitious, if you're still deciding |
-| [docs/TEAMS.md](docs/TEAMS.md) | Put the robot in a Teams call: it listens, and speaks when named |
+| [docs/TEAMS.md](docs/TEAMS.md) | Put the robot in a Teams call: it listens, and speaks when named. Works with you on a second device; sharing one Mac with it is WIP |
 | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Every failure we hit, and its fix |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How it works, and why some odd-looking things are load-bearing |
 

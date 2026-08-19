@@ -11,6 +11,25 @@ python examples/10_teams_call.py       # join the call
 Everything still runs locally. Whisper transcribes, Ollama thinks, Kokoro speaks;
 no audio and no transcript leaves the machine.
 
+## Status
+
+One routing is confirmed working on real hardware. The rest is written from how
+CoreAudio behaves, not from a meeting that ran.
+
+| | |
+| --- | --- |
+| **Works** — robot as the participant, you on your phone | [below](#a-real-call-with-no-audio-midi-setup-at-all) |
+| **WIP** — you and the robot both on the call from one Mac | [below](#being-on-the-call-too-wip) |
+| Untested — Multi-Output / Aggregate variants, Windows | marked where they appear |
+
+**Confirmed:** Teams speaker `BlackHole 2ch`, mic `BlackHole 16ch`, noise suppression
+off, robot on `--input "BlackHole 2ch" --output "BlackHole 16ch"`, and you joining the
+same meeting from a phone. The robot hears the call, and everyone hears its replies.
+The wake word gate works. So does `--open-mic`.
+
+**Not working yet:** being on the call from the Mac *at the same time* as the robot.
+Details and suspects in that section — don't follow it expecting it to work.
+
 ---
 
 ## The idea
@@ -36,6 +55,11 @@ into BlackHole means you can no longer hear the call yourself.
 ---
 
 ## macOS setup, about ten minutes
+
+> Untested as a whole. The `BlackHole 2ch` / `BlackHole 16ch` pair underneath it is
+> confirmed; the Multi-Output and Aggregate devices wrapped around it are not. If
+> you want the shortest confirmed path, skip to
+> [a real call with no Audio MIDI Setup](#a-real-call-with-no-audio-midi-setup-at-all).
 
 ### 1. Install two cables
 
@@ -98,8 +122,8 @@ out. Restart Teams after installing BlackHole, or the devices won't appear.
 
 > **This gives the robot your microphone.** Teams has one mic slot, `BlackHole 16ch`
 > now occupies it, and your own voice no longer reaches the call. That is fine when
-> the robot is the participant and you are watching. To be on the call yourself as
-> well, see [Being on the call too](#being-on-the-call-too).
+> the robot is the participant and you are watching. Being on the call yourself as
+> well does not work yet — see [Being on the call too](#being-on-the-call-too-wip).
 
 **`config.local.yaml`** (git-ignored; `cp config.local.example.yaml config.local.yaml`):
 
@@ -188,54 +212,77 @@ Nothing else changes.
 
 ---
 
-## Being on the call too
+## Being on the call too (WIP)
 
-Everything above puts the **robot** on the call. You are a spectator: Teams' single
-mic slot is `BlackHole 16ch`, carrying the robot's voice, so nothing you say reaches
-the meeting. Two ways to get yourself back in.
+> **This does not work yet.** Both approaches below were tried and neither got a
+> person and the robot onto the same call from one Mac. They are recorded so the
+> next attempt starts from the dead ends rather than rediscovering them. If you
+> need this working today, use your phone as your own endpoint — that route is
+> confirmed.
 
-### The easy way: let the robot talk out loud
+Everything above puts the **robot** on the call. You are a spectator, in both
+directions at once, and each has its own cause:
 
-Put the robot's voice into the room and let your own microphone pick it up, exactly
-as it would if a robot were sitting on your desk in a meeting. No new software, no
-Audio MIDI Setup beyond `Teams Out`.
+- **You can't speak.** Teams has one microphone slot and `BlackHole 16ch` is in it,
+  carrying the robot's voice. Nothing you say reaches the meeting.
+- **You can't hear.** Teams' speaker is `BlackHole 2ch`, which goes to the robot.
+
+The second half is the easy one and probably does work: a Multi-Output Device
+(`BlackHole 2ch` + your headphones) as Teams' speaker feeds both of you. Untested,
+but nothing about it is unusual. The microphone half is the hard one.
+
+### Attempt 1: let the robot talk out loud — did not work
+
+The idea: put the robot's voice in the room and let your own microphone carry it to
+the call, as if a robot were sitting on your desk.
 
 | Where | Setting |
 | --- | --- |
-| Teams → Speaker | `Teams Out` (Multi-Output: BlackHole 2ch + your headphones) |
-| Teams → Mic | `MacBook Pro Microphone` — it hears both you and the robot |
-| Noise suppression | **Off**, or it will gate the robot as noise |
+| Teams → Speaker | `Teams Out` (Multi-Output: BlackHole 2ch + headphones) |
+| Teams → Mic | `MacBook Pro Microphone` |
+| Noise suppression | Off |
 
 ```bash
 python examples/10_teams_call.py --input "BlackHole 2ch" --output "MacBook Pro Speakers"
 ```
 
-You hear the call and speak normally; the robot hears the call down the cable and
-answers into the room, where your mic carries it to everyone. **Wear headphones** —
-on speakers, Teams' own output loops back into the mic, and you are relying on echo
-cancellation to save you.
+Reported not working. Suspects, roughly in order:
 
-The robot will now hear itself through that microphone. Already handled: audio is
-discarded while it speaks.
+1. **Teams gating the robot anyway.** Noise suppression off is not the only filter —
+   Teams also applies echo cancellation, and audio from your speakers arriving at
+   your mic is precisely what that is built to remove. It cannot tell the robot's
+   voice from the meeting's own echo.
+2. **Level.** Laptop speakers at conversational volume, a metre from a mic tuned for
+   a voice at 30 cm, and Teams' automatic gain riding on top.
+3. **The robot hearing itself and re-triggering.** Handled while it speaks, but not
+   in the gap immediately after.
 
-### The clean way: mix two sources into one virtual mic
+Worth trying next: a separate USB mic pointed at the robot rather than the built-in
+one, and checking Teams' own mic level meter while the robot talks — if the meter
+doesn't move, the problem is (1) or (2) and not the kit.
 
-Fully digital, better sounding, more parts. BlackHole is a cable, not a mixer, so
-you need something that mixes — **LadioCast** (free, Mac App Store) or **Loopback**
-(Rogue Amoeba, paid) — plus a third cable to carry the result:
+### Attempt 2: mix two sources into one virtual mic — not completed
+
+Fully digital and the right answer in principle. BlackHole is a cable, not a mixer,
+so it needs a mixer — **LadioCast** (free, Mac App Store) or **Loopback** (Rogue
+Amoeba, paid) — plus a third cable for the result:
 
 ```bash
 brew install blackhole-64ch     # the mixed "microphone" bus
 ```
 
 In LadioCast: Input 1 = your microphone, Input 2 = `BlackHole 16ch` (the robot),
-Main output = `BlackHole 64ch`. Then set Teams' microphone to `BlackHole 64ch`.
+Main output = `BlackHole 64ch`. Teams' microphone = `BlackHole 64ch`.
 
-An Aggregate Device will **not** do this job, however tempting it looks. Aggregating
-your mic with `BlackHole 16ch` gives Teams an 18-channel device, and Teams reads the
-first channel or two — which are BlackHole's. Your voice sits on channels 17–18 and
-is never looked at. Aggregate devices present channels side by side; mixing them
-down is a thing only a mixer does.
+Not verified — nobody has run it here. It is the most likely of the two to work,
+since it never leaves the digital domain and so gives echo cancellation nothing to
+grab onto.
+
+**A dead end worth naming:** an Aggregate Device will not do this job, however much
+it looks like it should. Aggregating your mic with `BlackHole 16ch` hands Teams an
+18-channel device, and Teams reads the first channel or two — BlackHole's. Your
+voice sits on channels 17–18 and is never read. Aggregate devices place channels
+side by side; mixing them down is a thing only a mixer does.
 
 ---
 
@@ -248,12 +295,18 @@ down is a thing only a mixer does.
 
 ---
 
-## Windows
+## Windows (untested)
 
-Same shape, different parts: install [VB-CABLE](https://vb-audio.com/Cable/) twice
+Nobody has run this on Windows. Written from the shape of the macOS setup, so treat
+it as a starting point rather than instructions.
+
+Same idea, different parts: install [VB-CABLE](https://vb-audio.com/Cable/) twice
 (CABLE A and CABLE B), and use **VoiceMeeter** for the Multi-Output halves, since
 Windows has no built-in equivalent. Teams' mic becomes `CABLE-A Input`, Ohbot's
 `output_device` becomes `CABLE-A Output`.
+
+The kit's own side needs nothing Windows-specific — `CallListener` reads channel
+counts and sample rates off whatever device it is given.
 
 ---
 
@@ -298,8 +351,14 @@ robot talks.
 **Ohbot hears nothing.** Teams' speaker isn't the Multi-Output containing
 BlackHole. `python tools/check_call_audio.py` will say so.
 
-**Ohbot hears the call but never you.** You skipped the Aggregate Device, or
-`channels` is still `1`.
+**Ohbot hears the call but never you.** Expected, and not solved — you are not in
+the call's audio, since Teams doesn't loop your own microphone back. The Aggregate
+Device is meant to fix it (with `channels: all`), but that whole direction is
+[WIP](#being-on-the-call-too-wip). Talk to it from your phone in the meantime.
+
+**It hears you but says nothing.** It was not addressed. Say "Ohbot, ..." or pass
+`--open-mic`. It prints a hint saying so for the first couple of unaddressed
+utterances; either way, plain `call: ...` lines mean it is hearing you perfectly.
 
 **Crackling, or one output silent.** Rate mismatch inside a Multi-Output. Set every
 member to 48000 Hz in Audio MIDI Setup.
