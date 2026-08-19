@@ -21,6 +21,10 @@ import _bootstrap  # noqa: F401
 CRITICAL = "critical"
 WARNING = "warning"
 
+# The vision model examples/09_vision.py defaults to. Separate from the chat
+# model: it is the only example that needs it, so a missing one is a warning.
+VISION_MODEL = "moondream"
+
 results = []
 
 
@@ -217,6 +221,72 @@ def check_microphone(device=None):
         return report("Microphone delivering audio", False, e, level=WARNING)
 
 
+def check_camera(index=0):
+    """A warning, not a failure -- only 09_vision.py needs a camera.
+
+    Worth checking here because macOS denies camera access to the terminal
+    silently: OpenCV reports "not authorized to capture video" and then a
+    camera that simply won't open, which reads as broken hardware rather than a
+    permission you have to grant. Finding that out now beats finding it out
+    while an audience watches a robot describe nothing.
+    """
+    try:
+        import cv2
+    except ImportError:
+        return report(
+            "OpenCV installed",
+            False,
+            "Only needed for 09_vision.py. It is in requirements.txt:\n"
+            "uv pip install -r requirements.txt",
+            level=WARNING,
+        )
+
+    camera = cv2.VideoCapture(index)
+    try:
+        if not camera.isOpened():
+            return report(
+                f"Camera {index} opens",
+                False,
+                "On macOS, grant camera access to the app running this -- System Settings\n"
+                "> Privacy & Security > Camera -- then restart it. Otherwise check no other\n"
+                "program is holding the camera.",
+                level=WARNING,
+            )
+        # The first frames after opening are often unexposed, which is why
+        # 09_vision.py discards a few before its first look. Do the same here,
+        # or this can report a working camera as delivering a black frame.
+        ok, frame = False, None
+        for _ in range(5):
+            ok, frame = camera.read()
+        detail = ""
+        if ok and frame is not None:
+            detail = f"{frame.shape[1]}x{frame.shape[0]}"
+        return report(
+            "Camera delivering frames",
+            ok,
+            detail or "Camera opened but returned no frame.",
+            level=WARNING,
+        )
+    finally:
+        camera.release()
+
+
+def check_vision_model(model=VISION_MODEL, host="http://localhost:11434"):
+    """Also a warning: every example except 09_vision.py works without this."""
+    from ohbot_kit import llm
+
+    try:
+        llm.check_model(model, host)
+        return report(f"Vision model '{model}' installed", True, level=WARNING)
+    except llm.OllamaError:
+        return report(
+            f"Vision model '{model}' installed",
+            False,
+            f"Only needed for 09_vision.py:  ollama pull {model}",
+            level=WARNING,
+        )
+
+
 # -- warmups --------------------------------------------------------------
 
 
@@ -292,6 +362,8 @@ def main():
     p.add_argument("--voice-name", default=None, help="Kokoro voice")
     p.add_argument("--smoke", action="store_true", help="also make the robot speak")
     p.add_argument("--skip-mic", action="store_true", help="skip the microphone check")
+    p.add_argument("--skip-camera", action="store_true", help="skip the camera check")
+    p.add_argument("--camera", type=int, default=0, help="camera index for the check")
     args = p.parse_args()
 
     print("Ohbot demo setup\n" + "=" * 40)
@@ -330,6 +402,11 @@ def main():
         section("Microphone (only needed for --voice)")
         check_microphone(resolved.get("input"))
 
+    if not args.skip_camera:
+        section("Camera and vision (only needed for 09_vision.py)")
+        check_camera(args.camera)
+        check_vision_model(VISION_MODEL, cfg.get("llm.host", "http://localhost:11434"))
+
     if args.smoke:
         section("Smoke test")
         smoke_test(voice_name, resolved.get("output"))
@@ -349,7 +426,13 @@ def main():
         print(f"READY (with {len(warned)} warning(s)):")
         for n in warned:
             print(f"  - {n}")
-        print("\nTyped mode will work. Voice mode (--voice) will not.")
+        # Name the mode each warning actually costs you. A blanket "voice mode
+        # will not work" is wrong when the only thing missing is a webcam.
+        print("\nTyped mode will work.")
+        if any("Microphone" in n or "Whisper" in n for n in warned):
+            print("Voice mode (--voice) will not.")
+        if any(k in n for n in warned for k in ("Camera", "Vision", "OpenCV")):
+            print("examples/09_vision.py will not.")
     else:
         print("READY. Everything checks out.")
 
