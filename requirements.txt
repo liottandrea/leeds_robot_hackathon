@@ -31,6 +31,7 @@ lxml==6.1.1
 numpy==2.4.6
 ohbot==4.0.18
 onnxruntime==1.28.0
+opencv-python==5.0.0.93
 packaging==26.3
 phonemizer-fork==3.3.2
 playsound3==3.3.2
