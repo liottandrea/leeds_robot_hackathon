@@ -96,6 +96,11 @@ Noise suppression is not optional. Teams classifies synthetic speech arriving on
 virtual device as noise and gates it, so participants hear the robot cutting in and
 out. Restart Teams after installing BlackHole, or the devices won't appear.
 
+> **This gives the robot your microphone.** Teams has one mic slot, `BlackHole 16ch`
+> now occupies it, and your own voice no longer reaches the call. That is fine when
+> the robot is the participant and you are watching. To be on the call yourself as
+> well, see [Being on the call too](#being-on-the-call-too).
+
 **`config.local.yaml`** (git-ignored; `cp config.local.example.yaml config.local.yaml`):
 
 ```yaml
@@ -180,6 +185,59 @@ silent, which is the trade — you hear the meeting through the phone instead.
 Get this working first. Then, if you want the room to hear it too, build the
 Multi-Output devices and swap the two names for `Teams Out` and `Ohbot Voice`.
 Nothing else changes.
+
+---
+
+## Being on the call too
+
+Everything above puts the **robot** on the call. You are a spectator: Teams' single
+mic slot is `BlackHole 16ch`, carrying the robot's voice, so nothing you say reaches
+the meeting. Two ways to get yourself back in.
+
+### The easy way: let the robot talk out loud
+
+Put the robot's voice into the room and let your own microphone pick it up, exactly
+as it would if a robot were sitting on your desk in a meeting. No new software, no
+Audio MIDI Setup beyond `Teams Out`.
+
+| Where | Setting |
+| --- | --- |
+| Teams → Speaker | `Teams Out` (Multi-Output: BlackHole 2ch + your headphones) |
+| Teams → Mic | `MacBook Pro Microphone` — it hears both you and the robot |
+| Noise suppression | **Off**, or it will gate the robot as noise |
+
+```bash
+python examples/10_teams_call.py --input "BlackHole 2ch" --output "MacBook Pro Speakers"
+```
+
+You hear the call and speak normally; the robot hears the call down the cable and
+answers into the room, where your mic carries it to everyone. **Wear headphones** —
+on speakers, Teams' own output loops back into the mic, and you are relying on echo
+cancellation to save you.
+
+The robot will now hear itself through that microphone. Already handled: audio is
+discarded while it speaks.
+
+### The clean way: mix two sources into one virtual mic
+
+Fully digital, better sounding, more parts. BlackHole is a cable, not a mixer, so
+you need something that mixes — **LadioCast** (free, Mac App Store) or **Loopback**
+(Rogue Amoeba, paid) — plus a third cable to carry the result:
+
+```bash
+brew install blackhole-64ch     # the mixed "microphone" bus
+```
+
+In LadioCast: Input 1 = your microphone, Input 2 = `BlackHole 16ch` (the robot),
+Main output = `BlackHole 64ch`. Then set Teams' microphone to `BlackHole 64ch`.
+
+An Aggregate Device will **not** do this job, however tempting it looks. Aggregating
+your mic with `BlackHole 16ch` gives Teams an 18-channel device, and Teams reads the
+first channel or two — which are BlackHole's. Your voice sits on channels 17–18 and
+is never looked at. Aggregate devices present channels side by side; mixing them
+down is a thing only a mixer does.
+
+---
 
 > Don't reverse those two. `BlackHole 16ch` is fine for the robot's **voice**, but
 > makes a poor pair of **ears**: Teams writes to two of its sixteen channels and
