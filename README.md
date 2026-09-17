@@ -4,7 +4,9 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 A desk robot that listens, thinks and reacts — with a face. Everything runs **locally**:
-no API keys, no internet, nothing leaves your laptop.
+no API keys, no internet, nothing leaves your laptop. (One exception: `streamlit_app.py`,
+the kids'-content demo control panel, calls the Anthropic API and needs `ANTHROPIC_API_KEY`
+set — see below.)
 
 ```python
 from ohbot_kit import Ohbot, setup
@@ -85,6 +87,12 @@ Numbered in the order worth reading them.
 (`ollama pull moondream`, 1.7 GB) and camera permission. `python tools/check_setup.py`
 reports on both. Everything else runs with just `phi4-mini`.
 
+`streamlit_app.py` is a presenter control panel for a kids'-content demo (nursery
+rhymes, jokes, short stories with matching expressions) — it's the one thing in this
+repo that calls out to the internet, via the Anthropic API. Set `ANTHROPIC_API_KEY`
+in your environment, then `streamlit run streamlit_app.py`. Its "Use fallback instead"
+button works without a key.
+
 ## What it can do
 
 **Face and body** — 10 emotions, 12 gestures, coordinated looking (eyes lead, head
@@ -99,6 +107,18 @@ that isn't in the vendor's docs.
 
 Add a pose or gesture to `ohbot_kit/expression.py` and it immediately becomes a choice the
 LLM can make — the schema is built from those tables.
+
+## Notes on the underlying `ohbot` library
+
+- Lip sync comes from the `ohbot` Python library's `say()` call (used internally by
+  `bot.speak()`) and is on by default. Which voices are available depends on your
+  environment; you can use Azure for speech in any environment if you have an Azure key —
+  see [`ohbot-python`'s Mac voice docs](https://github.com/ohbot/ohbot-python/blob/master/Docs/VoiceDoc_Mac.md).
+- The library leaves motors powered after a move. `bot.__exit__` (the end of a `with
+  Ohbot(...) as bot:` block) already calls `ohbot.reset()` for you, so this isn't an issue
+  for the examples here. If you hold a session open for a long idle period, or wire up a
+  stop button, calling `ohbot.reset()` yourself to de-energise the motors is good practice
+  — it isn't necessary for the event, but it saves motor wear.
 
 ## Is it working properly?
 
