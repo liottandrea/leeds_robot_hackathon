@@ -73,6 +73,20 @@ POSES = {
     "confused": {LIDBLINK: 8, HEADNOD: 5, EYETILT: 5, HEADROLL: 3, EYETURN: 6},
     # Pulled back and slightly away, eyes wide. Pair with the "shiver" gesture.
     "scared": {LIDBLINK: 10, HEADNOD: 3, EYETILT: 6, HEADROLL: 6, BOTTOMLIP: 7, TOPLIP: 6},
+    # Wide grin with a lopsided head tilt -- the tilt (via HEADROLL) is what
+    # reads as "silly" rather than plain "happy".
+    "silly": {LIDBLINK: 9, HEADNOD: 6, EYETILT: 6, HEADROLL: 8, BOTTOMLIP: 8, TOPLIP: 5},
+    # Half-closed eyes and a drooping head, like it's about to nod off.
+    "sleepy": {LIDBLINK: 3, HEADNOD: 3, EYETILT: 3, HEADROLL: 5, BOTTOMLIP: 4, TOPLIP: 4},
+    # Bigger and dumber than "silly" -- wide grin, no self-awareness, for the
+    # broadest laugh lines.
+    "goofy": {LIDBLINK: 8, HEADNOD: 6, EYETILT: 6, HEADROLL: 9, BOTTOMLIP: 9, TOPLIP: 4},
+    # Half-lidded, small closed-mouth smirk, tilted the OPPOSITE way from
+    # silly/goofy -- self-satisfied rather than delighted.
+    "smug": {LIDBLINK: 6, HEADNOD: 5, EYETILT: 5, HEADROLL: 2, BOTTOMLIP: 6, TOPLIP: 3},
+    # A sideways glance (EYETURN off-centre -- the one thing here that reads
+    # as "sneaky") plus a small grin: the "I have a plan" face.
+    "mischievous": {LIDBLINK: 5, HEADNOD: 5, EYETILT: 4, HEADROLL: 6, EYETURN: 8, BOTTOMLIP: 6, TOPLIP: 4},
 }
 
 # Axes that aim the face at the person. A pose may leave these off-centre for
@@ -180,6 +194,26 @@ GESTURES = {
         (LIDBLINK, 0, 10, 0.09),
         (LIDBLINK, 10, 10, 0.05),
     ],
+    # A shimmy -- quick side-to-side head roll, like shaking off excitement.
+    "wiggle": [
+        (HEADROLL, 8, 10, 0.10),
+        (HEADROLL, 2, 10, 0.10),
+        (HEADROLL, 8, 10, 0.10),
+        (HEADROLL, 2, 10, 0.10),
+        (HEADROLL, 5, 8, 0.12),
+    ],
+    # A "tee-hee": rapid blinking paired with a little head bounce -- finding
+    # something funny, not just agreeing with it (that's "nod").
+    "giggle": [
+        (HEADNOD, 6, 10, 0.10),
+        (LIDBLINK, 5, 10, 0.08),
+        (HEADNOD, 4, 10, 0.10),
+        (LIDBLINK, 10, 10, 0.08),
+        (HEADNOD, 6, 10, 0.10),
+        (LIDBLINK, 5, 10, 0.08),
+        (HEADNOD, 5, 8, 0.12),
+        (LIDBLINK, 10, 10, 0.08),
+    ],
 }
 
 # What each gesture MEANS. The LLM picks from names alone otherwise, and names
@@ -200,6 +234,8 @@ GESTURE_MEANINGS = {
     "double_blink": "mild confusion or processing",
     "shiver": "fear, dread, being creeped out",
     "recoil": "alarm or disgust at something unpleasant",
+    "wiggle": "playful excitement, showing off, being silly",
+    "giggle": "amusement, finding something funny",
 }
 
 # Which gestures suit which emotion.
@@ -232,6 +268,11 @@ EMOTION_GESTURES = {
     "curious": ["tilt", "lean_in", "double_blink", "blink"],
     "confused": ["double_blink", "tilt", "shake"],
     "thinking": ["look_away", "double_blink", "tilt"],
+    "silly": ["wiggle", "giggle", "perk_up", "double_take"],
+    "sleepy": ["slow_nod", "blink"],
+    "goofy": ["wiggle", "giggle", "perk_up"],
+    "smug": ["tilt", "nod"],
+    "mischievous": ["wiggle", "look_away", "double_blink"],
 }
 
 # Emotions the LLM is allowed to pick. Kept in one place so the JSON schema and

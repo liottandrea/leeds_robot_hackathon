@@ -43,6 +43,15 @@ That is the maximum length you should ever use."""
 # code: generation is capped and only the first few sentences are ever spoken.
 MAX_SENTENCES = 3
 
+# self.messages grew with no limit across turns, and the full history is sent
+# on every request with no num_ctx set. A long enough chat eventually pushed
+# each request past the model's context window or TIMEOUT below, and the only
+# failure-path cleanup (self.messages.pop()) only dropped that turn's message,
+# not the bloated history that caused the failure -- so once a chat crossed
+# this line it stayed broken for the rest of the session. Capping history
+# keeps the payload (and latency) bounded instead of growing forever.
+MAX_HISTORY_MESSAGES = 20
+
 # Used for structured emotion/gesture selection. See respond_with_action.
 ACTION_TEMPERATURE = 0.3
 
@@ -149,6 +158,16 @@ class Conversation:
     def reset(self) -> None:
         self.messages = []
 
+    def _trim_history(self) -> None:
+        """Cap stored history so the payload sent to Ollama stays bounded.
+
+        Called after every successful turn, right after the assistant's reply
+        is appended, so self.messages never grows past MAX_HISTORY_MESSAGES
+        between requests.
+        """
+        if len(self.messages) > MAX_HISTORY_MESSAGES:
+            del self.messages[: -MAX_HISTORY_MESSAGES]
+
     def warm_up(self) -> None:
         """Force the model to load now, so the first real reply isn't slow."""
         # Warming up is an optimisation; the real call surfaces any problem
@@ -251,6 +270,7 @@ class Conversation:
         reply = " ".join(spoken)
         if reply:
             self.messages.append({"role": "assistant", "content": reply})
+            self._trim_history()
         else:
             self.messages.pop()  # nothing came back; don't poison the history
 
@@ -343,6 +363,7 @@ class Conversation:
 
         if action["say"]:
             self.messages.append({"role": "assistant", "content": action["say"]})
+            self._trim_history()
         else:
             self.messages.pop()
         return action
@@ -432,6 +453,7 @@ class Conversation:
             self.messages.append(
                 {"role": "assistant", "content": " ".join(b["say"] for b in beats)}
             )
+            self._trim_history()
         else:
             self.messages.pop()
         return beats
@@ -461,6 +483,10 @@ You also control your own face and body. With every reply choose:
 
 Match them to what the person actually said. Bad news gets sympathy and a slow
 nod, not cheerfulness. Never shake your head at good news -- that reads as "no".
+Lean toward the fun end of the scale when there's room for it -- silly, goofy,
+excited or mischievous beat plain neutral for anything even a little amusing.
+Save sympathetic, sad and scared for when the person is genuinely upset, never
+as a joke.
 Prefer subtle choices; constant big gestures look twitchy rather than expressive."""
 
 # Multi-beat delivery. Kept separate from ACTION_SUFFIX because asking for both
@@ -472,7 +498,9 @@ plus the emotion to say it with, chosen from: {emotions}
 
 Let the emotion change across beats where the meaning changes -- concerned while
 you acknowledge a problem, then warmer as you offer help. If the reply is a
-single thought, one beat is correct; do not pad it."""
+single thought, one beat is correct; do not pad it. Lean playful when the
+content allows it -- silly, goofy or mischievous beat neutral for anything
+lighthearted."""
 
 
 def chat_once(prompt: str, model: str = DEFAULT_MODEL) -> str:

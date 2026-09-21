@@ -101,3 +101,47 @@ class TestValidation:
         path = write(tmp_path, "c.yaml", "- just\n- a\n- list\n")
         with pytest.raises(RuntimeError, match="mapping"):
             config_mod.load(path, None, warn=False)
+
+
+class TestUpdateLocal:
+    def test_preserves_leading_comment_block_and_siblings(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """config.local.yaml's machine-specific notes live in a leading
+        comment block since PyYAML drops comments on a full rewrite -- a
+        write-back must not lose them, and a partial update must not wipe
+        sibling keys like a plain re-dump would risk."""
+        local = write(
+            tmp_path,
+            "config.local.yaml",
+            "# Machine-specific notes.\n"
+            "# More notes.\n"
+            "\n"
+            "audio:\n"
+            "  input_device: Plantronics\n"
+            "  output_device: Plantronics\n",
+        )
+        config_mod.update_local({"audio": {"output_device": "MacBook Pro Speakers"}}, local)
+
+        text = open(local).read()
+        assert "# Machine-specific notes." in text
+        assert "# More notes." in text
+
+        cfg = config_mod.load(None, local, warn=False)
+        assert cfg.get("audio.output_device") == "MacBook Pro Speakers"
+        assert cfg.get("audio.input_device") == "Plantronics"
+
+    def test_creates_file_when_missing(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        local = str(tmp_path / "config.local.yaml")
+        config_mod.update_local({"audio": {"output_device": "BlackHole 16ch"}}, local)
+
+        cfg = config_mod.load(None, local, warn=False)
+        assert cfg.get("audio.output_device") == "BlackHole 16ch"
+
+    def test_resetting_to_none_writes_null(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        """Picking "System default" in the UI should behave exactly like the
+        shipped config's `output_device: null`, not like an unset key."""
+        local = write(tmp_path, "config.local.yaml", "audio:\n  output_device: Plantronics\n")
+        config_mod.update_local({"audio": {"output_device": None}}, local)
+
+        assert "output_device: null" in open(local).read()
+        cfg = config_mod.load(None, local, warn=False)
+        assert cfg.get("audio.output_device", "fallback") == "fallback"

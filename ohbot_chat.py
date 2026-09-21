@@ -1,6 +1,7 @@
 """Talk to an Ohbot robot powered by a local Ollama model.
 
     python ohbot_chat.py                      # type to chat, with expression
+                                               # (defaults to the "joker" persona)
     python ohbot_chat.py --mode beats         # expression changes mid-reply
     python ohbot_chat.py --mode plain         # no expression, just speech
     python ohbot_chat.py --voice              # speak instead of typing
@@ -32,7 +33,9 @@ def parse_args():
     # Config-backed options default to None so "not given" is distinguishable
     # from "given the same value as the default".
     p.add_argument("--config", default=config_mod.DEFAULT_PATH, help="path to config.yaml")
-    p.add_argument("--persona", default=None, help="persona from config.yaml")
+    # Funnier than config.yaml's global "friendly" default -- this is the app
+    # people run to see the robot be entertaining. --persona still overrides it.
+    p.add_argument("--persona", default="joker", help="persona from config.yaml")
     p.add_argument("--model", default=None, help="Ollama model name")
     p.add_argument("--voice", action="store_true", help="use the microphone instead of typing")
     p.add_argument("--no-idle", action="store_true", help="disable idle blinking and drift")
@@ -175,6 +178,13 @@ def main():
     # built-in default. The persona beats the global setting because choosing a
     # character is a more specific intent than setting a default voice.
     voice_name = args.voice_name or persona.get("voice") or cfg.get("tts.voice", tts.DEFAULT_VOICE)
+    # Same precedence as voice: a persona like chipmunk or bear needs its own
+    # speed to sound right, not just a different voice.
+    speed = args.speed
+    if speed is None:
+        speed = persona.get("speed")
+    if speed is None:
+        speed = cfg.get("tts.speed", tts.DEFAULT_SPEED)
 
     engine = "say"
     if engine_name == "kokoro":
@@ -182,7 +192,7 @@ def main():
             tts.install(
                 tts.KokoroTTS(
                     voice=voice_name,
-                    speed=pick(args.speed, cfg, "tts.speed", tts.DEFAULT_SPEED),
+                    speed=speed,
                 )
             )
             engine = f"kokoro ({voice_name})"

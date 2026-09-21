@@ -5,8 +5,8 @@
 
 A desk robot that listens, thinks and reacts — with a face. Everything runs **locally**:
 no API keys, no internet, nothing leaves your laptop. (One exception: `streamlit_app.py`,
-the kids'-content demo control panel, calls the Anthropic API and needs `ANTHROPIC_API_KEY`
-set — see below.)
+the kids'-content demo control panel, calls Claude on Amazon Bedrock using the AWS CLI
+profile named in `config.yaml` — see below.)
 
 ```python
 from ohbot_kit import Ohbot, setup
@@ -87,11 +87,20 @@ Numbered in the order worth reading them.
 (`ollama pull moondream`, 1.7 GB) and camera permission. `python tools/check_setup.py`
 reports on both. Everything else runs with just `phi4-mini`.
 
-`streamlit_app.py` is a presenter control panel for a kids'-content demo (nursery
-rhymes, jokes, short stories with matching expressions) — it's the one thing in this
-repo that calls out to the internet, via the Anthropic API. Set `ANTHROPIC_API_KEY`
-in your environment, then `streamlit run streamlit_app.py`. Its "Use fallback instead"
-button works without a key.
+`streamlit_app.py` is a presenter control panel with two jobs. **Kids' Content** is a
+kids'-content demo (nursery rhymes, jokes, short stories with matching expressions) —
+it's the one thing in this repo that calls out to the internet, via Claude on Amazon
+Bedrock. It authenticates with the AWS CLI profile named in `config.yaml`'s
+`kids_content.aws_profile` (default: `genai-agent-user`) — no API key needed, just
+`aws configure --profile genai-agent-user` (or equivalent SSO login) done once. Its "Use
+fallback instead" button works even without AWS credentials configured at all.
+**Examples** and **Full App** launch any `examples/*.py` script or `ohbot_chat.py` as a
+real subprocess, streaming its output into the page — scripts that read `input()` get a
+text box wired to their stdin, and mic/camera-driven ones just use the machine's real
+hardware, same as running them from a terminal. Pick a category from the sidebar, then
+`streamlit run streamlit_app.py`. A "🔊 Audio devices" sidebar control lets you switch
+input/output devices from the browser (persisted to `config.local.yaml`), instead of
+editing it by hand.
 
 ## What it can do
 

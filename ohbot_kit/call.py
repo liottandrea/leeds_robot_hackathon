@@ -61,6 +61,7 @@ from .voice import (
     SAMPLE_RATE,
     Listener,
     _rms,
+    resample_to_whisper,
 )
 
 # Whisper hears the robot's name several ways -- voice.NAME_HINT biases the
@@ -116,31 +117,6 @@ def downmix(block: NDArray[Any]) -> NDArray[Any]:
     if block.shape[1] == 1:
         return block[:, 0].copy()
     return block.mean(axis=1)
-
-
-def resample_to_whisper(audio: NDArray[Any], capture_rate: int) -> NDArray[Any]:
-    """Convert audio captured at capture_rate to the 16 kHz Whisper expects."""
-    if capture_rate == SAMPLE_RATE or len(audio) == 0:
-        return audio
-
-    ratio = capture_rate / float(SAMPLE_RATE)
-
-    # Box-average down by the integer part first. Plain decimation folds
-    # everything above 8 kHz back into the speech band as a hiss, and Whisper
-    # turns hiss into extra words.
-    width = int(ratio)
-    usable = len(audio) // width * width if width > 1 else 0
-    if usable:
-        audio = audio[:usable].reshape(-1, width).mean(axis=1)
-        ratio /= width
-
-    if abs(ratio - 1.0) > 1e-6:  # non-integer, e.g. 44100 -> 16000
-        n_out = int(len(audio) / ratio)
-        if n_out < 2:
-            return np.zeros(0, dtype=np.float32)
-        audio = np.interp(np.arange(n_out) * ratio, np.arange(len(audio)), audio)
-
-    return np.ascontiguousarray(audio, dtype=np.float32)
 
 
 def resolve_channels(channels: int | str | None, info: Mapping[str, Any]) -> int:

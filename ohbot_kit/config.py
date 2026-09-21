@@ -34,6 +34,7 @@ KNOWN_SECTIONS = {
     "robot",
     "persona",
     "personas",
+    "kids_content",
 }
 
 
@@ -125,6 +126,33 @@ def load(
                 )
 
     return Config(data, sources)
+
+
+def update_local(updates: dict[str, Any], local_path: str = LOCAL_PATH) -> None:
+    """Merge `updates` into config.local.yaml and write it back.
+
+    PyYAML's dumper drops comments on a full rewrite, and config.local.yaml's
+    own machine-specific notes live in a leading comment block -- so that
+    block is read back out and re-prepended verbatim rather than round-tripped
+    through the parser.
+    """
+    header_lines: list[str] = []
+    data: dict[str, Any] = {}
+    if os.path.exists(local_path):
+        with open(local_path) as f:
+            raw = f.read()
+        for line in raw.splitlines():
+            if line.strip() == "" or line.strip().startswith("#"):
+                header_lines.append(line)
+            else:
+                break
+        data = yaml.safe_load(raw) or {}
+
+    merged = _deep_merge(data, updates)
+    with open(local_path, "w") as f:
+        if header_lines:
+            f.write("\n".join(header_lines) + "\n\n")
+        yaml.safe_dump(merged, f, sort_keys=False, default_flow_style=False)
 
 
 if __name__ == "__main__":
