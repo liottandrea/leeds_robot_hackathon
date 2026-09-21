@@ -108,6 +108,20 @@ class Ohbot:
             ohbot.reset()
         finally:
             ohbot.close()  # detach motors so they stop drawing current
+            # ohbot.close() only detaches motors -- it never closes the
+            # underlying serial.Serial the vendored library opened in
+            # init(). Left open, the OS keeps this process's exclusive
+            # claim on the USB-serial port for the rest of its life, so a
+            # subprocess (e.g. a hub-launched example) that tries to open
+            # the same port fails silently forever, even after this
+            # context manager has "exited". Closing it here is what
+            # actually frees the port for someone else.
+            if ohbot.ser is not None:
+                try:
+                    ohbot.ser.close()
+                except Exception:
+                    pass
+            ohbot.connected = False
         return False
 
     # -- speech ------------------------------------------------------------

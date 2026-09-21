@@ -31,7 +31,9 @@ tts:
   # Precedence: --voice-name > persona's voice > this > built-in default.
   # See all 54: python -c "import tts; print(tts.KokoroTTS().voices())"
   voice: af_heart
-  speed: 1.0
+  # Slightly slower than natural: gestures have fixed keyframe timings, and a
+  # slower utterance gives them proportionally more of it to play across.
+  speed: 0.9
 
 kids_content:
   # AWS CLI profile with Bedrock access to Anthropic models.

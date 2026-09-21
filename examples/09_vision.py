@@ -24,19 +24,18 @@ says "not authorized to capture video", grant camera access to the app you run
 Python from -- VS Code, if that is where your terminal lives, not Terminal.app.
 `python tools/check_setup.py` reports the camera and the vision model.
 
-Before you rewrite PROMPT below, read the comment above it. Asking a 1.7 GB
-model to act in character instead of describe makes it emit "!!!!!!".
+Before you rewrite the captioning prompt, read the comment above it in
+ohbot_kit/vision.py. Asking a 1.7 GB model to act in character instead of
+describe makes it emit "!!!!!!".
 """
 
 import argparse
-import base64
 import sys
 import time
 
 import _bootstrap  # noqa: F401
-import requests
 
-from ohbot_kit import Ohbot, expression, llm, setup
+from ohbot_kit import Ohbot, expression, llm, setup, vision
 
 p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
 p.add_argument("--model", default="moondream", help="an Ollama model with vision")
@@ -44,78 +43,21 @@ p.add_argument("--interval", type=float, default=8.0, help="seconds between look
 p.add_argument("--camera", type=int, default=0)
 args = p.parse_args()
 
-try:
-    import cv2
-except ImportError:
-    sys.exit("Needs OpenCV:  pip install opencv-python")
-
-# Keep this a plain captioning instruction. moondream is a 1.7 GB model and it
-# collapses if you ask it to act: measured at temperature 0, 3/3 identical runs
-# each time -- "as if you were a friendly robot looking at it" returned a string
-# of "!!!!!!", "Mention people if there are any." returned an empty string, and
-# any "in one short sentence" phrasing lost the first token of the reply
-# ("urns of blue..."). Plain description returns a clean, accurate caption.
-#
-# The personality belongs to the chat model further down, which turns this
-# caption into an in-character reaction. Asking the vision model to be a
-# character as well is both redundant and what broke it.
-PROMPT = "Describe this image, including any people in it."
-
-# macOS hands back a few unexposed (black) frames right after the device opens.
-WARMUP_FRAMES = 5
-
 # Messages of history to keep -- two exchanges. See the trim in the loop below.
 HISTORY = 4
 
 cfg, convo, robot_kwargs = setup()
+host = cfg.get("llm.host", llm.HOST)
 
 try:
-    llm.check_model(args.model, cfg.get("llm.host", llm.HOST))
+    llm.check_model(args.model, host)
 except llm.OllamaError as e:
     sys.exit(f"{e}\n\nInstall it with:  ollama pull {args.model}")
 
-
-def look_and_describe(camera):
-    """Grab a frame and ask the vision model about it.
-
-    Returns None if the camera gave us nothing; raises llm.OllamaError if the
-    model could not be reached, so the caller can treat both as a skipped turn.
-    """
-    ok, frame = camera.read()
-    if not ok:
-        return None
-    # Downscale before encoding: full-resolution frames cost seconds of
-    # inference for no gain in what the model notices.
-    frame = cv2.resize(frame, (512, 384))
-    ok, buf = cv2.imencode(".jpg", frame)
-    if not ok:
-        return None
-
-    try:
-        r = requests.post(
-            "{}/api/generate".format(cfg.get("llm.host", llm.HOST)),
-            json={
-                "model": args.model,
-                "prompt": PROMPT,
-                "images": [base64.b64encode(buf.tobytes()).decode()],
-                "stream": False,
-            },
-            timeout=180,
-        )
-        r.raise_for_status()
-        return llm.sanitise(r.json().get("response", ""))
-    except (requests.RequestException, ValueError) as e:
-        raise llm.OllamaError(f"Vision request failed: {e}") from e
-
-
-camera = cv2.VideoCapture(args.camera)
-if not camera.isOpened():
-    sys.exit(f"Could not open camera {args.camera}. Check macOS camera permission.")
-
-# Let the sensor settle before the first look, or the robot opens by describing
-# a black rectangle with total confidence.
-for _ in range(WARMUP_FRAMES):
-    camera.read()
+try:
+    camera = vision.Camera(args.camera, args.model, host).open()
+except vision.CameraError as e:
+    sys.exit(str(e))
 
 print(f"Looking every {args.interval:.0f}s. Ctrl-C to stop.\n")
 
@@ -131,7 +73,7 @@ try:
             # here would spin at full speed against a camera or a model that has
             # stopped answering, which is exactly when you least want that.
             try:
-                description = look_and_describe(camera)
+                description = camera.describe()
             except llm.OllamaError as e:
                 print(f"[vision] {e}", file=sys.stderr)
                 time.sleep(args.interval)
@@ -173,4 +115,4 @@ try:
 except KeyboardInterrupt:
     print()
 finally:
-    camera.release()
+    camera.close()

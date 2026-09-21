@@ -21,6 +21,8 @@ come from config.yaml / config.local.yaml, same as ohbot_chat.py.
 
 from __future__ import annotations
 
+import os
+import re
 import shlex
 import subprocess
 import sys
@@ -41,7 +43,8 @@ import sounddevice as sd
 import streamlit as st
 from streamlit.runtime.scriptrunner import add_script_run_ctx
 
-from ohbot_kit import audio, kids_content, tts
+from ohbot import ohbot
+from ohbot_kit import audio, kids_content, llm, tts
 from ohbot_kit import config as config_mod
 from ohbot_kit.robot import Ohbot
 
@@ -73,8 +76,8 @@ class ArgSpec:
                         passed if changed from that default.
 
     choices/suggestions can instead be resolved at render time from
-    config.yaml via `dynamic` ("personas" or "voices"), so the dropdown stays
-    in sync if personas are added or renamed.
+    config.yaml via `dynamic` ("personas", "voices", or "ollama_models"), so
+    the dropdown stays in sync if personas/models are added or renamed.
     """
 
     kind: str
@@ -82,7 +85,7 @@ class ArgSpec:
     flag: str = ""  # "" means positional (no --flag, just the value)
     choices: tuple[str, ...] = ()
     suggestions: tuple[str, ...] = ()
-    dynamic: str = ""  # "" | "personas" | "voices"
+    dynamic: str = ""  # "" | "personas" | "voices" | "ollama_models"
     default: str = "0"  # kind == "number" only
     step: float = 1.0  # kind == "number" only
 
@@ -98,6 +101,7 @@ class Runnable:
     stdin: bool = False  # show a "send to stdin" box while it's running
     args: tuple[ArgSpec, ...] = ()
     advanced_hint: str = ""  # placeholder for the free-form "other args" box
+    chat_transcript: bool = False  # show a "last messages" panel above the log
 
 
 EXAMPLES: tuple[Runnable, ...] = (
@@ -157,12 +161,15 @@ FULL_APP: tuple[Runnable, ...] = (
               args=(
                   ArgSpec(kind="choice", label="Persona", flag="--persona", dynamic="personas"),
                   ArgSpec(kind="flag", label="Voice input", flag="--voice"),
+                  ArgSpec(kind="flag", label="Camera (let it see you)", flag="--camera"),
                   ArgSpec(kind="choice", label="Mode", flag="--mode",
                           choices=("empathy", "beats", "plain")),
-                  ArgSpec(kind="text", label="Model", flag="--model", suggestions=("phi4-mini",)),
+                  ArgSpec(kind="text", label="Model", flag="--model",
+                          suggestions=("phi4-mini",), dynamic="ollama_models"),
                   ArgSpec(kind="flag", label="List audio devices only", flag="--list-devices"),
               ),
-              advanced_hint="--speed 1.4 | --voice-name af_sky | --max-sentences 3"),
+              advanced_hint="--speed 1.4 | --voice-name af_sky | --max-sentences 3",
+              chat_transcript=True),
 )
 
 
@@ -215,6 +222,13 @@ def get_robot() -> tuple[Ohbot | None, str | None]:
         return None, f"Robot not responding: audio device error ({e})"
 
     try:
+        if not ohbot.connected:
+            # ohbot.init() only auto-runs once, at module import. If
+            # release_robot() closed the port (or the very first import-time
+            # attempt failed while nothing was plugged in yet), it must be
+            # called again here or Ohbot().__enter__() below would silently
+            # no-op forever against a dead connection.
+            ohbot.init()
         bot = Ohbot(
             idle=cfg.get("robot.idle", True),
             colours=cfg.get("robot.eye_colours"),
@@ -248,14 +262,25 @@ def release_robot() -> None:
     st.session_state["robot_connected"] = False
 
 
-def ensure_voice(cfg: config_mod.Config, content_type: str) -> None:
-    """Install the persona voice for this content type, only if it changed."""
-    voice = kids_content.voice_for_content_type(cfg, content_type, tts.DEFAULT_VOICE)
-    if st.session_state.installed_tts_voice == voice:
+def ensure_voice(cfg: config_mod.Config, content_type: str, persona: dict | None = None) -> None:
+    """Install the right voice+speed, only if they changed.
+
+    persona (a config.yaml personas.* entry) overrides the content-type
+    mapping when set -- both voice and speed, since some personas (chipmunk,
+    bear) only sound right at their own speed.
+    """
+    if persona:
+        voice = persona.get("voice") or tts.DEFAULT_VOICE
+        speed = persona.get("speed") or cfg.get("tts.speed", tts.DEFAULT_SPEED)
+    else:
+        voice = kids_content.voice_for_content_type(cfg, content_type, tts.DEFAULT_VOICE)
+        speed = cfg.get("tts.speed", tts.DEFAULT_SPEED)
+
+    if st.session_state.installed_tts_voice == (voice, speed):
         return
     try:
-        tts.install(tts.KokoroTTS(voice=voice, speed=cfg.get("tts.speed", tts.DEFAULT_SPEED)))
-        st.session_state.installed_tts_voice = voice
+        tts.install(tts.KokoroTTS(voice=voice, speed=speed))
+        st.session_state.installed_tts_voice = (voice, speed)
     except Exception as e:
         # A demo with the wrong voice beats a demo that crashes on a missing
         # Kokoro file, so fall back to whatever's already installed.
@@ -272,6 +297,7 @@ def _worker(
     request_id: int,
     stop_event: threading.Event,
     use_fallback: bool,
+    persona: dict | None,
 ) -> None:
     def superseded() -> bool:
         return stop_event.is_set() or st.session_state.get("request_id") != request_id
@@ -281,7 +307,9 @@ def _worker(
     else:
         assert client is not None, "caller must not start a non-fallback request without a client"
         try:
-            content = kids_content.generate(client, character, topic, content_type, model=model)
+            content = kids_content.generate(
+                client, character, topic, content_type, model=model, persona=persona
+            )
         except kids_content.GenerationError as e:
             if not superseded():
                 st.session_state.error_message = f"Content generation failed: {e}"
@@ -315,7 +343,7 @@ def _worker(
         st.session_state.status = "idle"
 
 
-def start_request(bot, client, character, topic, content_type, model, use_fallback) -> None:
+def start_request(bot, client, character, topic, content_type, model, use_fallback, persona=None) -> None:
     st.session_state.request_id += 1
     my_request_id = st.session_state.request_id
     stop_event = threading.Event()
@@ -324,11 +352,14 @@ def start_request(bot, client, character, topic, content_type, model, use_fallba
     st.session_state.content = None
     st.session_state.status = "generating" if not use_fallback else "speaking"
 
-    ensure_voice(get_config(), content_type)
+    ensure_voice(get_config(), content_type, persona)
 
     thread = threading.Thread(
         target=_worker,
-        args=(bot, client, character, topic, content_type, model, my_request_id, stop_event, use_fallback),
+        args=(
+            bot, client, character, topic, content_type, model,
+            my_request_id, stop_event, use_fallback, persona,
+        ),
         daemon=True,
     )
     add_script_run_ctx(thread)  # lets the thread write st.session_state safely
@@ -396,16 +427,20 @@ def render_kids_content() -> None:
     topic = st.text_input("Topic", placeholder="e.g. going to the moon")
     content_type = st.radio("Content type", CONTENT_TYPES, horizontal=True)
 
+    persona_names = sorted(cfg.section("personas"))
+    persona_choice = st.selectbox("Persona", ["Auto (match content type)"] + persona_names)
+    persona = None if persona_choice.startswith("Auto") else cfg.persona(persona_choice)
+
     busy = st.session_state.status in ("generating", "speaking")
 
     col1, col2, col3 = st.columns(3)
     with col1:
         if st.button("Generate & Perform", disabled=busy or client is None, type="primary"):
-            start_request(bot, client, character, topic, content_type, model, use_fallback=False)
+            start_request(bot, client, character, topic, content_type, model, use_fallback=False, persona=persona)
             st.rerun()
     with col2:
         if st.button("Use fallback instead"):
-            start_request(bot, client, character, topic, content_type, model, use_fallback=True)
+            start_request(bot, client, character, topic, content_type, model, use_fallback=True, persona=persona)
             st.rerun()
     with col3:
         if st.button("Stop", disabled=not busy):
@@ -414,7 +449,10 @@ def render_kids_content() -> None:
 
     if st.session_state.content:
         segments = st.session_state.content["segments"]
-        text = "\n".join(f"[{seg['expression']}] {seg['text']}" for seg in segments)
+        text = "\n".join(
+            f"[{seg['expression']}{' + pause' if seg.get('pause_before') else ''}] {seg['text']}"
+            for seg in segments
+        )
         st.text_area("Performance", value=text, height=200, disabled=True)
 
     if busy:
@@ -423,16 +461,23 @@ def render_kids_content() -> None:
 
 
 def _pump_output(proc: subprocess.Popen) -> None:
-    """Stream a subprocess's merged stdout/stderr into session state, line by line.
+    """Stream a subprocess's merged stdout/stderr into proc's own buffer, line by line.
 
-    Runs on a background thread since proc.stdout.readline() blocks -- the same
-    reason _worker() above runs on its own thread rather than in the main script run.
+    Runs on a background thread since proc.stdout.readline() blocks. Deliberately
+    does NOT touch st.session_state: this thread lives for the whole subprocess,
+    but the Run panel's own polling (`render_runner`'s `time.sleep(0.4); st.rerun()`
+    while a script is active) starts a new script run every ~0.4s. A background
+    thread registered to one run via add_script_run_ctx gets StopException the
+    next time it touches session state once that run is superseded -- with
+    unbuffered output arriving line by line, that happens almost immediately, so
+    the thread would die a line or two in and the log would appear to freeze.
+    Writing to a plain lock-protected list on `proc` instead sidesteps that
+    entirely; render_runner (running safely in the current script run) reads it.
     """
     assert proc.stdout is not None, "caller must construct proc with stdout=PIPE"
     for line in iter(proc.stdout.readline, ""):
-        if st.session_state.get("runner_proc") is not proc:
-            return  # superseded by Stop + a new Run; stop writing into session state
-        st.session_state.runner_output += line
+        with proc.output_lock:
+            proc.output_lines.append(line)
     proc.stdout.close()
 
 
@@ -448,11 +493,19 @@ def start_runnable(entry: Runnable, argv: list[str]) -> None:
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
+    proc.output_lock = threading.Lock()
+    proc.output_lines = []
     st.session_state.runner_proc = proc
     thread = threading.Thread(target=_pump_output, args=(proc,), daemon=True)
-    add_script_run_ctx(thread)
     thread.start()
+
+
+def _snapshot_output(proc: subprocess.Popen) -> str:
+    """Safe to call from the main script run: copies proc's buffer into a string."""
+    with proc.output_lock:
+        return "".join(proc.output_lines)
 
 
 def stop_runnable() -> None:
@@ -463,6 +516,8 @@ def stop_runnable() -> None:
             proc.wait(timeout=2)
         except subprocess.TimeoutExpired:
             proc.kill()
+    if proc is not None:
+        st.session_state.runner_output = _snapshot_output(proc)
     st.session_state.runner_proc = None
 
 
@@ -480,6 +535,12 @@ def _resolve_choices(spec: ArgSpec, cfg: config_mod.Config) -> tuple[str, ...]:
     if spec.dynamic == "voices":
         voices = {p.get("voice") for p in cfg.section("personas").values() if p.get("voice")}
         return tuple(sorted(voices))
+    if spec.dynamic == "ollama_models":
+        try:
+            models = llm.list_models(cfg.get("llm.host", llm.HOST))
+        except llm.OllamaError:
+            models = list(spec.suggestions)
+        return tuple(models) + (llm.BEDROCK_MODEL_ALIAS,)
     return spec.choices
 
 
@@ -532,6 +593,20 @@ def render_args(entry: Runnable, cfg: config_mod.Config, disabled: bool) -> list
     return [*argv, *positional]
 
 
+_TURN_RE = re.compile(r"^(You|Ohbot(?:\s*\[[^\]]+\])?): (.*)$")
+
+
+def _parse_chat_turns(output: str) -> list[tuple[str, str]]:
+    """Pull (role, text) turns out of ohbot_chat.py's own log lines."""
+    turns = []
+    for line in output.splitlines():
+        m = _TURN_RE.match(line)
+        if m:
+            role = "user" if m.group(1) == "You" else "assistant"
+            turns.append((role, m.group(2)))
+    return turns
+
+
 def render_runner(entry: Runnable) -> None:
     """Run/stop panel shared by every entry in EXAMPLES and FULL_APP.
 
@@ -543,7 +618,12 @@ def render_runner(entry: Runnable) -> None:
     st.caption(entry.description)
 
     proc = st.session_state.runner_proc
-    running = proc is not None and st.session_state.runner_key == entry.key and proc.poll() is None
+    is_current = proc is not None and st.session_state.runner_key == entry.key
+    running = is_current and proc.poll() is None
+    if is_current:
+        # Safe here (main script run) even though _pump_output fills proc's
+        # buffer from a background thread -- see _pump_output's docstring.
+        st.session_state.runner_output = _snapshot_output(proc)
 
     argv = render_args(entry, get_config(), disabled=running)
     advanced = st.text_input(
@@ -565,7 +645,23 @@ def render_runner(entry: Runnable) -> None:
         if st.button("Send", key=f"send_{entry.key}") and line:
             send_line(line)
 
-    st.text_area("Output", value=st.session_state.runner_output, height=320, disabled=True, key=f"out_{entry.key}")
+    if "--camera" in argv and running:
+        if st.button("Take a picture", key=f"photo_{entry.key}"):
+            send_line("/look")
+
+    if entry.chat_transcript:
+        st.caption("Last messages")
+        with st.container(height=220, border=True):
+            for role, text in _parse_chat_turns(st.session_state.runner_output)[-5:]:
+                st.chat_message(role).write(text)
+
+    st.text_area(
+        "Output",
+        value=st.session_state.runner_output[-4000:],
+        height=320,
+        disabled=True,
+        key=f"out_{entry.key}",
+    )
 
     if proc is not None and st.session_state.runner_key == entry.key and not running:
         st.caption(f"Exited with code {proc.returncode}")

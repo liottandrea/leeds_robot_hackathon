@@ -16,11 +16,17 @@ import threading
 from collections.abc import Iterator, Sequence
 from typing import Any
 
+import anthropic
 import requests
 
 HOST = "http://localhost:11434"
 DEFAULT_MODEL = "phi4-mini"
 TIMEOUT = 120
+
+# Sentinel model name the Model dropdown/CLI use to mean "skip Ollama
+# entirely and talk to Claude Haiku over AWS Bedrock instead" -- the same
+# Bedrock path ohbot_kit.kids_content already uses.
+BEDROCK_MODEL_ALIAS = "claude-haiku-bedrock"
 
 # Everything the model writes gets spoken aloud by a robot, so the length limit
 # is not a style preference -- a long answer means a long silence while the WAV
@@ -147,13 +153,27 @@ class Conversation:
         host: str = HOST,
         temperature: float = 0.7,
         num_predict: int = 80,
+        provider: str = "ollama",
+        aws_profile: str | None = None,
+        aws_region: str | None = None,
     ) -> None:
         self.model = model
         self.system = system
         self.host = host
         self.temperature = temperature
         self.num_predict = num_predict
+        self.provider = provider
         self.messages: list[dict[str, str]] = []
+        # Same client shape as streamlit_app.py:get_llm_client() /
+        # kids_content.generate() -- an inference-profile model id and the
+        # AWS CLI profile named in config.yaml's kids_content section.
+        self._bedrock_client = (
+            anthropic.AnthropicBedrock(
+                aws_profile=aws_profile, aws_region=aws_region, timeout=TIMEOUT, max_retries=0
+            )
+            if provider == "bedrock"
+            else None
+        )
 
     def reset(self) -> None:
         self.messages = []
@@ -170,6 +190,9 @@ class Conversation:
 
     def warm_up(self) -> None:
         """Force the model to load now, so the first real reply isn't slow."""
+        # No local model to preload on Bedrock -- the API is always "warm".
+        if self.provider == "bedrock":
+            return
         # Warming up is an optimisation; the real call surfaces any problem
         # with a message the caller can act on.
         with contextlib.suppress(requests.RequestException):
@@ -186,6 +209,23 @@ class Conversation:
 
     def _raw_stream(self, out: queue.Queue[Any]) -> None:
         """Producer: push response fragments onto the queue, then a None sentinel."""
+        if self.provider == "bedrock":
+            try:
+                with self._bedrock_client.messages.stream(
+                    model=self.model,
+                    max_tokens=self.num_predict,
+                    system=self.system,
+                    messages=self.messages,
+                    extra_body={"temperature": self.temperature},
+                ) as stream:
+                    for fragment in stream.text_stream:
+                        out.put(fragment)
+            except Exception as e:
+                out.put(OllamaError(f"Bedrock request failed: {e}"))
+            finally:
+                out.put(None)
+            return
+
         try:
             r = requests.post(
                 f"{self.host}/api/chat",
@@ -276,6 +316,52 @@ class Conversation:
 
     # -- structured "act as you speak" mode --------------------------------
 
+    def _structured_call(
+        self, system: str, schema: dict[str, Any], num_predict: int, temperature: float
+    ) -> dict[str, Any]:
+        """Send one schema-constrained request and return the parsed dict.
+
+        Shared by respond_with_action and respond_with_beats. self.messages
+        must already hold the new user turn; on failure it is left in place
+        for the caller to pop back off, since only the caller knows whether
+        that's the right recovery (both do the same thing today, but this
+        keeps the mistake-recovery decision next to the mistake).
+        """
+        if self.provider == "bedrock":
+            try:
+                response = self._bedrock_client.messages.create(
+                    model=self.model,
+                    max_tokens=num_predict,
+                    system=system,
+                    messages=self.messages,
+                    extra_body={"temperature": temperature},
+                    output_config={"format": {"type": "json_schema", "schema": schema}},
+                )
+                text_block = next(b.text for b in response.content if b.type == "text")
+                return json.loads(text_block)
+            except Exception as e:
+                raise OllamaError(f"Bedrock request failed: {e}") from e
+
+        # Typed explicitly: the JSON-schema dict is richer than the JsonType
+        # alias requests advertises, so passing it inline fails type checking.
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "messages": [{"role": "system", "content": system}] + self.messages,
+            "stream": False,
+            "format": schema,
+            "options": {
+                "temperature": temperature,
+                "num_predict": num_predict,
+            },
+        }
+        try:
+            r = requests.post(f"{self.host}/api/chat", json=payload, timeout=TIMEOUT)
+            r.raise_for_status()
+            content = r.json().get("message", {}).get("content", "")
+            return json.loads(content)
+        except (requests.RequestException, ValueError) as e:
+            raise OllamaError(f"Structured request failed: {e}") from e
+
     def respond_with_action(
         self,
         user_text: str,
@@ -303,6 +389,9 @@ class Conversation:
                 "gaze_y": {"type": "integer"},
             },
             "required": ["say", "emotion", "gesture"],
+            # Bedrock's structured-output mode rejects an object schema that
+            # doesn't explicitly say this; Ollama ignores it either way.
+            "additionalProperties": False,
         }
 
         self.messages.append({"role": "user", "content": user_text})
@@ -317,32 +406,13 @@ class Conversation:
         system = self.system + ACTION_SUFFIX.format(
             emotions=", ".join(emotions), gestures=gesture_menu
         )
-
-        # Typed explicitly: the JSON-schema dict is richer than the JsonType
-        # alias requests advertises, so passing it inline fails type checking.
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": [{"role": "system", "content": system}] + self.messages,
-            "stream": False,
-            "format": schema,
-            "options": {
-                # Cooler than plain chat on purpose. Picking the right emotion
-                # is a classification, not a creative act: at 0.7 the same
-                # input scored 12/12 on one run and 10/12 on the next, with
-                # "what is two plus two?" drawing `excited`.
-                "temperature": (ACTION_TEMPERATURE if temperature is None else temperature),
-                "num_predict": self.num_predict,
-            },
-        }
+        temperature = ACTION_TEMPERATURE if temperature is None else temperature
 
         try:
-            r = requests.post(f"{self.host}/api/chat", json=payload, timeout=TIMEOUT)
-            r.raise_for_status()
-            content = r.json().get("message", {}).get("content", "")
-            action = json.loads(content)
-        except (requests.RequestException, ValueError) as e:
+            action = self._structured_call(system, schema, self.num_predict, temperature)
+        except OllamaError:
             self.messages.pop()
-            raise OllamaError(f"Structured request failed: {e}") from e
+            raise
 
         action["say"] = sanitise(unwrap_say(action.get("say", "")))
 
@@ -398,39 +468,35 @@ class Conversation:
                         "properties": {
                             "say": {"type": "string"},
                             "emotion": {"type": "string", "enum": list(emotions)},
+                            # Mirrors respond_with_action's gaze fields, so each
+                            # beat can shift where the robot is looking, not just
+                            # its face -- otherwise a multi-beat reply keeps
+                            # staring in one direction the whole way through.
+                            "gaze_x": {"type": "integer"},
+                            "gaze_y": {"type": "integer"},
                         },
                         "required": ["say", "emotion"],
+                        "additionalProperties": False,
                     },
                 }
             },
             "required": ["beats"],
+            "additionalProperties": False,
         }
 
         self.messages.append({"role": "user", "content": user_text})
         system = self.system + BEATS_SUFFIX.format(
             emotions=", ".join(emotions), max_beats=max_beats
         )
-
-        # Typed explicitly: the schema dict is richer than the JsonType alias
-        # requests advertises, so passing it inline fails type checking.
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": [{"role": "system", "content": system}] + self.messages,
-            "stream": False,
-            "format": schema,
-            "options": {
-                "temperature": (ACTION_TEMPERATURE if temperature is None else temperature),
-                "num_predict": self.num_predict * 2,  # room for several sentences
-            },
-        }
+        temperature = ACTION_TEMPERATURE if temperature is None else temperature
 
         try:
-            r = requests.post(f"{self.host}/api/chat", json=payload, timeout=TIMEOUT)
-            r.raise_for_status()
-            parsed = json.loads(r.json().get("message", {}).get("content", ""))
-        except (requests.RequestException, ValueError) as e:
+            parsed = self._structured_call(
+                system, schema, self.num_predict * 2, temperature  # room for several sentences
+            )
+        except OllamaError:
             self.messages.pop()
-            raise OllamaError(f"Beat request failed: {e}") from e
+            raise
 
         from . import expression
 
@@ -446,6 +512,8 @@ class Conversation:
                     "say": said,
                     "emotion": emotion,
                     "gesture": suited[len(said) % len(suited)] if suited else "blink",
+                    "gaze_x": raw.get("gaze_x", 5),
+                    "gaze_y": raw.get("gaze_y", 5),
                 }
             )
 
@@ -493,11 +561,15 @@ Prefer subtle choices; constant big gestures look twitchy rather than expressive
 # a list and a gesture in one schema made a small model drop fields.
 BEATS_SUFFIX = """
 
-Break your reply into up to {max_beats} short beats. Each beat is ONE sentence
-plus the emotion to say it with, chosen from: {emotions}
+Break your reply into up to {max_beats} short beats. Each beat is ONE sentence,
+plus the emotion to say it with (chosen from: {emotions}) and where to look
+while saying it: gaze_x (0 = your right, 5 = ahead, 10 = your left) and
+gaze_y (0 = down, 10 = up).
 
-Let the emotion change across beats where the meaning changes -- concerned while
-you acknowledge a problem, then warmer as you offer help. If the reply is a
+Let the emotion and gaze change across beats where the meaning changes --
+concerned while you acknowledge a problem, then warmer as you offer help.
+Vary the gaze a little from beat to beat rather than repeating the same
+direction every time, unless staying put fits the moment. If the reply is a
 single thought, one beat is correct; do not pad it. Lean playful when the
 content allows it -- silly, goofy or mischievous beat neutral for anything
 lighthearted."""

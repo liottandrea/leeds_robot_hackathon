@@ -7,6 +7,9 @@ not here.
 
 from __future__ import annotations
 
+import json
+import threading
+
 import pytest
 
 from ohbot_kit import expression as ex
@@ -73,3 +76,109 @@ def test_expressions_are_a_subset_of_known_poses() -> None:
     every one of those tags must exist in ohbot_kit.expression.POSES -- this is
     exactly the test that would catch a forgotten `silly`/`sleepy` addition."""
     assert set(kc.EXPRESSIONS) <= set(ex.POSES)
+
+
+class TestPerform:
+    def test_speaks_every_segment_in_order(self, bot, fake_ohbot) -> None:
+        content = _content("one", "two", "three")
+        kc.perform(bot, content, threading.Event())
+        assert fake_ohbot.said == ["one", "two", "three"]
+
+    def test_gesture_is_derived_from_emotion_and_varies_by_position(
+        self, bot, fake_ohbot, monkeypatch
+    ) -> None:
+        """Same emotion on every segment shouldn't play the identical gesture
+        each time -- perform() indexes expression.gestures_for(emotion) by
+        segment position, mirroring ohbot_chat.py's beats mode."""
+        played: list[str] = []
+        monkeypatch.setattr(bot, "gesture", lambda name, **kw: played.append(name))
+        content = {
+            "segments": [{"text": t, "expression": "silly"} for t in ("a", "b", "c")]
+        }
+        kc.perform(bot, content, threading.Event())
+        suited = ex.gestures_for("silly")
+        assert played == [suited[i % len(suited)] for i in range(3)]
+        assert all(name in suited for name in played)
+
+    def test_stop_event_halts_before_next_segment(self, bot, fake_ohbot) -> None:
+        stop_event = threading.Event()
+        content = _content("one", "two")
+        stop_event.set()
+        kc.perform(bot, content, stop_event)
+        assert fake_ohbot.said == []
+
+    def test_pause_before_holds_curious_face_then_speaks(
+        self, bot, fake_ohbot, monkeypatch
+    ) -> None:
+        # Patch the `time` name inside kids_content only -- robot.py's own
+        # `import time` (used by gesture keyframes' hold_seconds) is a
+        # separate reference and must keep sleeping for real timing, not be
+        # swept up by a blanket patch of the shared time module.
+        slept: list[float] = []
+        monkeypatch.setattr(kc, "time", type("FakeTime", (), {"sleep": staticmethod(slept.append)}))
+        content = {
+            "segments": [
+                {"text": "setup", "expression": "neutral"},
+                {"text": "punchline", "expression": "silly", "pause_before": True},
+            ]
+        }
+        kc.perform(bot, content, threading.Event())
+        assert slept == [kc.PUNCHLINE_PAUSE_SECONDS]
+        assert fake_ohbot.said == ["setup", "punchline"]
+
+    def test_pause_respects_stop_event(self, bot, fake_ohbot, monkeypatch) -> None:
+        """A stop requested during the pause must not speak the paused segment."""
+        stop_event = threading.Event()
+        monkeypatch.setattr(
+            kc, "time", type("FakeTime", (), {"sleep": staticmethod(lambda s: stop_event.set())})
+        )
+        content = {
+            "segments": [
+                {"text": "setup", "expression": "neutral"},
+                {"text": "punchline", "expression": "silly", "pause_before": True},
+            ]
+        }
+        kc.perform(bot, content, stop_event)
+        assert fake_ohbot.said == ["setup"]
+
+
+class _FakeMessages:
+    def __init__(self, reply_segments: list[dict]) -> None:
+        self.reply_segments = reply_segments
+        self.last_kwargs: dict | None = None
+
+    def create(self, **kwargs):
+        self.last_kwargs = kwargs
+
+        class Block:
+            type = "text"
+            text = json.dumps({"segments": self.reply_segments})
+
+        class Response:
+            content = [Block()]
+
+        return Response()
+
+
+class _FakeClient:
+    def __init__(self, reply_segments: list[dict]) -> None:
+        self.messages = _FakeMessages(reply_segments)
+
+
+def _valid_segments() -> list[dict]:
+    return [{"text": t, "expression": "happy"} for t in ("a", "b", "c")]
+
+
+class TestGeneratePersona:
+    def test_no_persona_uses_plain_system_prompt(self) -> None:
+        client = _FakeClient(_valid_segments())
+        kc.generate(client, "a fox", "the moon", "story")
+        assert client.messages.last_kwargs["system"] == kc.SYSTEM_PROMPT
+
+    def test_persona_system_prompt_is_appended_after_the_rules(self) -> None:
+        client = _FakeClient(_valid_segments())
+        persona = {"system_prompt": "You are Ohbot, a friendly pirate.", "voice": "am_michael"}
+        kc.generate(client, "a fox", "the moon", "story", persona=persona)
+        system = client.messages.last_kwargs["system"]
+        assert system.startswith(kc.SYSTEM_PROMPT)
+        assert "pirate" in system

@@ -17,9 +17,12 @@ import json
 import random
 import re
 import threading
+import time
 from typing import TYPE_CHECKING
 
 import anthropic
+
+from . import expression
 
 if TYPE_CHECKING:
     from .robot import Ohbot
@@ -34,8 +37,15 @@ DEFAULT_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 # not silently retry into a much longer wait.
 TIMEOUT_SECONDS = 6.0
 MAX_TOKENS = 400
+# How long to hold, face turned curious, before a "pause_before" segment (a
+# joke's punchline, a story's reveal). Long enough to read as a deliberate
+# beat, short enough not to feel like a hang for a child waiting on it.
+PUNCHLINE_PAUSE_SECONDS = 0.9
 
-EXPRESSIONS = ("happy", "surprised", "silly", "sleepy", "neutral")
+EXPRESSIONS = (
+    "happy", "surprised", "silly", "sleepy", "neutral",
+    "excited", "curious", "goofy", "mischievous", "sympathetic",
+)
 
 SEGMENT_SCHEMA = {
     "type": "object",
@@ -51,6 +61,15 @@ SEGMENT_SCHEMA = {
                 "properties": {
                     "text": {"type": "string"},
                     "expression": {"type": "string", "enum": list(EXPRESSIONS)},
+                    # Where to look while saying it, same convention as the
+                    # chat beats schema in ohbot_kit/llm.py: 0-10, defaults to
+                    # dead ahead (5, 5) when omitted.
+                    "gaze_x": {"type": "integer"},
+                    "gaze_y": {"type": "integer"},
+                    # At most one segment per performance -- a joke's
+                    # punchline, a story's reveal -- for a short suspenseful
+                    # hold before it's spoken.
+                    "pause_before": {"type": "boolean"},
                 },
                 "required": ["text", "expression"],
                 "additionalProperties": False,
@@ -75,7 +94,14 @@ Rules, all mandatory:
 - Return ONLY the structured output described by the JSON schema you were
   given: a "segments" array of 3 to 5 short segments, each with "text" (a short
   spoken chunk, roughly one sentence) and "expression" (one of: happy,
-  surprised, silly, sleepy, neutral) matching that segment's mood.
+  surprised, silly, sleepy, neutral, excited, curious, goofy, mischievous,
+  sympathetic) matching that segment's mood.
+- Optionally, a segment may set "gaze_x" (0 = the robot's right, 5 = ahead, 10
+  = the robot's left) and "gaze_y" (0 = down, 10 = up) if looking somewhere
+  else fits the moment; omit both to look straight ahead.
+- At most one segment -- a joke's punchline, or a story's big reveal -- may
+  set "pause_before": true for a short suspenseful pause right before it's
+  said. Use this sparingly, never on more than one segment.
 """
 
 
@@ -89,13 +115,26 @@ def generate(
     topic: str,
     content_type: str,
     model: str = DEFAULT_MODEL,
+    persona: dict | None = None,
 ) -> dict:
     """Ask Claude (via Bedrock) for a segmented, expression-tagged performance.
 
     Returns {"segments": [{"text": str, "expression": str}, ...]}, 3-5 items.
     Raises GenerationError on any timeout, API, or parsing failure -- callers
     map that straight onto the UI's "error" status.
+
+    persona, if given, is a config.yaml personas.* entry (the same dict
+    ohbot_chat.py's --persona resolves to). Its system_prompt is appended,
+    subordinated to the rules above -- personas are written in character
+    ("You are Ohbot, a ... pirate ...") which is exactly the flavour that
+    should colour the wording, but the safety/length rules must still win.
     """
+    system = SYSTEM_PROMPT
+    if persona:
+        system += (
+            "\n\nPerform this in the following character, without ever breaking "
+            "the rules above:\n" + persona.get("system_prompt", "")
+        )
     user_prompt = (
         f"Content type: {content_type}\n"
         f"Character: {character}\n"
@@ -106,7 +145,7 @@ def generate(
         response = client.messages.create(
             model=model,
             max_tokens=MAX_TOKENS,
-            system=SYSTEM_PROMPT,
+            system=system,
             messages=[{"role": "user", "content": user_prompt}],
             output_config={"format": {"type": "json_schema", "schema": SEGMENT_SCHEMA}},
         )
@@ -204,22 +243,22 @@ FALLBACK_LIBRARY: dict[str, list[dict]] = {
     "joke": [
         {"segments": [
             {"text": "Why did the robot go to school?", "expression": "neutral"},
-            {"text": "To improve its algo-rhythm!", "expression": "silly"},
+            {"text": "To improve its algo-rhythm!", "expression": "silly", "pause_before": True},
             {"text": "Get it? Rhythm, like dancing?", "expression": "happy"},
         ]},
         {"segments": [
             {"text": "What do you call a sleepy dinosaur?", "expression": "neutral"},
-            {"text": "A dino-snore!", "expression": "silly"},
+            {"text": "A dino-snore!", "expression": "silly", "pause_before": True},
             {"text": "Rawr... zzz.", "expression": "sleepy"},
         ]},
         {"segments": [
             {"text": "Why don't robots ever panic?", "expression": "neutral"},
-            {"text": "They have nerves of steel!", "expression": "silly"},
+            {"text": "They have nerves of steel!", "expression": "silly", "pause_before": True},
             {"text": "Ha! Get it?", "expression": "happy"},
         ]},
         {"segments": [
             {"text": "What did one wall say to the other?", "expression": "neutral"},
-            {"text": "I'll meet you at the corner!", "expression": "surprised"},
+            {"text": "I'll meet you at the corner!", "expression": "surprised", "pause_before": True},
             {"text": "Ha ha, walls are so silly.", "expression": "silly"},
         ]},
     ],
@@ -256,14 +295,29 @@ def perform(bot: "Ohbot", content: dict, stop_event: threading.Event) -> None:
     """Drive Ohbot through a segmented, expression-tagged performance.
 
     Format-agnostic: content has the same shape whether it came from
-    generate() or get_fallback(). Checked for a stop between segments only --
-    interrupting the current segment's audio is the Stop button's own job
-    (calling sd.stop() directly), not this loop's.
+    generate() or get_fallback() -- gaze_x/gaze_y/pause_before are all
+    optional keys, so fallback-library segments (which never set them) still
+    play correctly. Checked for a stop between segments only -- interrupting
+    the current segment's audio is the Stop button's own job (calling
+    sd.stop() directly), not this loop's.
+
+    Gesture isn't asked of the model (unlike emotion/gaze) -- it's derived
+    from the emotion via expression.gestures_for(), the same choice
+    ohbot_chat.py's beats mode makes, indexed by segment position so repeated
+    emotions don't always play the identical gesture.
     """
-    for seg in content["segments"]:
+    for i, seg in enumerate(content["segments"]):
         if stop_event.is_set():
             return
-        bot.speak(seg["text"], emotion=seg["expression"])
+        emotion = seg["expression"]
+        if seg.get("pause_before"):
+            bot.express("curious")
+            time.sleep(PUNCHLINE_PAUSE_SECONDS)
+            if stop_event.is_set():
+                return
+        suited = expression.gestures_for(emotion)
+        bot.gaze(seg.get("gaze_x", 5), seg.get("gaze_y", 5))
+        bot.speak(seg["text"], emotion=emotion, gesture=suited[i % len(suited)])
     if not stop_event.is_set():
         bot.express("neutral")
 

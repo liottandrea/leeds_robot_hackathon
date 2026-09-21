@@ -6,6 +6,8 @@
     python ohbot_chat.py --mode plain         # no expression, just speech
     python ohbot_chat.py --voice              # speak instead of typing
     python ohbot_chat.py --persona pirate     # different personality and voice
+    python ohbot_chat.py --camera             # let it see you; type /look for a photo
+    python ohbot_chat.py --voice --camera     # both: speak, and still say/send /look
     python ohbot_chat.py --list-devices       # show audio devices, then exit
 
 Settings live in config.yaml, overridden by config.local.yaml (git-ignored,
@@ -13,19 +15,33 @@ for machine-specific things like audio devices), overridden by these flags.
 
 Run from the project root so the ohbotData/ calibration folder is shared.
 Requires Ollama running locally (`ollama serve`) and the Ohbot plugged in.
+--camera additionally needs a local vision model (`ollama pull moondream`),
+even when --model points at Bedrock -- the camera never talks to Bedrock.
+With --voice, the mic can't type "/look", so a /look line sent on stdin
+(e.g. the Streamlit "Take a picture" button) still works from a background
+thread; typing it directly at a terminal only works without --voice.
 """
 
 import argparse
+import contextlib
 import sys
+import threading
 
-from ohbot_kit import audio, expression, llm, tts
+from ohbot_kit import audio, expression, kids_content, llm, tts, vision
 from ohbot_kit import config as config_mod
 from ohbot_kit.robot import Ohbot
 
 BANNER = """Ohbot chat -- model: {model}, voice: {engine}, persona: {persona}, mode: {mode}
 Audio in: {mic} | out: {out}
-Type and press enter. Commands: /reset (forget context), /quit
+Type and press enter. Commands: {commands}
 """
+
+INTRO_PROMPT = "Introduce yourself briefly, in character, to whoever just started this chat."
+LOOK_PROMPT = (
+    "You just looked at the person you are talking to through your camera and "
+    "saw: {description}. React briefly, in character -- make a joke or tease "
+    "them about what you saw, don't just describe it back."
+)
 
 
 def parse_args():
@@ -45,6 +61,18 @@ def parse_args():
     p.add_argument("--max-sentences", type=int, default=None, help="cap on spoken sentences")
     p.add_argument("--input-device", default=None, help="microphone name substring")
     p.add_argument("--output-device", default=None, help="speaker name substring")
+    p.add_argument(
+        "--camera",
+        nargs="?",
+        type=int,
+        const=0,
+        default=None,
+        metavar="INDEX",
+        help="let it see you through webcam INDEX (default 0); type /look for a photo",
+    )
+    p.add_argument(
+        "--vision-model", default=None, help="Ollama model with vision (default moondream)"
+    )
     p.add_argument(
         "--mode",
         choices=("empathy", "beats", "plain"),
@@ -85,6 +113,7 @@ def respond(bot, convo, text, max_sentences, mode="empathy"):
         elif mode == "beats":
             for beat in convo.respond_with_beats(text, expression.EMOTIONS, max_sentences):
                 print(f"Ohbot [{beat['emotion']}/{beat['gesture']}]: {beat['say']}")
+                bot.gaze(beat.get("gaze_x", 5), beat.get("gaze_y", 5))
                 bot.speak(beat["say"], emotion=beat["emotion"], gesture=beat["gesture"])
                 said_anything = True
 
@@ -103,6 +132,55 @@ def respond(bot, convo, text, max_sentences, mode="empathy"):
         bot.speak("Sorry, I did not catch that.", emotion="confused")
 
     bot.set_state("listening")
+
+
+def look(bot, convo, eye, max_sentences, mode="empathy"):
+    """Grab a frame from the camera and let the robot react to what it sees.
+
+    eye.describe() returning None (no frame) or "" (nothing describable, e.g. a
+    covered lens), and the camera/model raising, all count as a skipped look --
+    spoken as a soft miss rather than a crash.
+    """
+    bot.set_state("thinking")
+    bot.express("curious")
+    try:
+        description = eye.describe()
+    except (vision.CameraError, llm.OllamaError) as e:
+        print(f"[camera] {e}", file=sys.stderr)
+        description = None
+
+    if not description:
+        bot.speak("I could not see anything just then.", emotion="confused")
+        bot.set_state("listening")
+        return
+
+    print(f"[camera] {description}")
+    before = len(convo.messages)
+    respond(bot, convo, LOOK_PROMPT.format(description=description), max_sentences, mode)
+    # The instruction ("React briefly... make a joke...") only needs to steer
+    # *this* reply. Left verbatim in history it reads, to a small model, like a
+    # standing directive to keep joking about the photo -- a later "do you like
+    # it?" got the same joke replayed instead of an answer. A short, plain
+    # stand-in keeps the photo as context without anchoring every reply after
+    # it back onto react-and-joke.
+    if len(convo.messages) == before + 2:
+        convo.messages[before]["content"] = f"[shows you a photo: {description}]"
+
+
+def watch_stdin_for_look(bot, convo, eye, max_sentences, mode, lock):
+    """Let "Take a picture" work over stdin even while --voice owns the mic.
+
+    Only started when --voice and --camera are both on: typed mode already
+    reads stdin directly in the main loop, so a second reader there would
+    steal its lines, and without --camera there is nothing for a stray line
+    to trigger. `lock` is the same one the main loop holds during a turn, so
+    a photo request waits its turn rather than talking over an in-progress
+    reply.
+    """
+    for line in sys.stdin:
+        if line.strip() in ("/look", "/photo"):
+            with lock:
+                look(bot, convo, eye, max_sentences, mode)
 
 
 def typed_inputs():
@@ -141,12 +219,30 @@ def main():
     host = cfg.get("llm.host", llm.HOST)
     max_sentences = pick(args.max_sentences, cfg, "llm.max_sentences", llm.MAX_SENTENCES)
 
-    # Fail fast with a useful message before touching the robot.
-    try:
-        llm.check_model(model, host)
-    except llm.OllamaError as e:
-        print(e, file=sys.stderr)
-        return 1
+    provider = "ollama"
+    if model == llm.BEDROCK_MODEL_ALIAS:
+        provider = "bedrock"
+        model = cfg.get("kids_content.model", kids_content.DEFAULT_MODEL)
+    else:
+        # Fail fast with a useful message before touching the robot.
+        try:
+            llm.check_model(model, host)
+        except llm.OllamaError as e:
+            print(e, file=sys.stderr)
+            return 1
+
+    # The camera always talks to a local Ollama vision model, even when the
+    # chat model itself is Bedrock -- so fail fast here too, before the robot.
+    eye = None
+    vision_model = None
+    if args.camera is not None:
+        vision_model = args.vision_model or vision.DEFAULT_MODEL
+        try:
+            llm.check_model(vision_model, host)
+            eye = vision.Camera(args.camera, vision_model, host).open()
+        except (llm.OllamaError, vision.CameraError) as e:
+            print(e, file=sys.stderr)
+            return 1
 
     # -- audio devices
     try:
@@ -168,6 +264,9 @@ def main():
         host=host,
         temperature=cfg.get("llm.temperature", 0.7),
         num_predict=cfg.get("llm.num_predict", 80),
+        provider=provider,
+        aws_profile=cfg.get("kids_content.aws_profile", "genai-agent-user"),
+        aws_region=cfg.get("kids_content.aws_region"),
     )
 
     # A demo that sounds worse beats a demo that doesn't run, so a missing or
@@ -220,6 +319,10 @@ def main():
         source = lambda bot: typed_inputs()  # noqa: E731
         mic_errors = ()
 
+    commands = "/reset (forget context), /quit"
+    if eye is not None:
+        commands = "/reset (forget context), /look (take a photo), /quit"
+
     print(
         BANNER.format(
             model=model,
@@ -228,12 +331,18 @@ def main():
             mode=args.mode,
             mic=audio.device_name(mic_device),
             out=audio.device_name(out_device),
+            commands=commands,
         )
     )
     if cfg.sources:
         print("config: {}".format(", ".join(cfg.sources)))
     print("Loading model...", flush=True)
     convo.warm_up()
+    if eye is not None:
+        # The first look costs ~10s while Ollama loads the vision model --
+        # pay that now, under "Loading model...", not during the first /look.
+        with contextlib.suppress(Exception):
+            eye.describe()
 
     idle = False if args.no_idle else cfg.get("robot.idle", True)
     with Ohbot(
@@ -242,7 +351,17 @@ def main():
         blink_interval=cfg.get("robot.blink_interval", (2, 6)),
         drift_interval=cfg.get("robot.drift_interval", (4, 9)),
     ) as bot:
-        bot.speak("Hello! I am ready to chat.")
+        respond(bot, convo, INTRO_PROMPT, max_sentences, args.mode)
+
+        # Guards every turn (typed/spoken reply or /look) so a photo request
+        # arriving on stdin mid-reply waits its turn instead of talking over it.
+        turn_lock = threading.Lock()
+        if args.voice and eye is not None:
+            threading.Thread(
+                target=watch_stdin_for_look,
+                args=(bot, convo, eye, max_sentences, args.mode, turn_lock),
+                daemon=True,
+            ).start()
 
         try:
             for text in source(bot):
@@ -250,19 +369,31 @@ def main():
                     continue
                 if text in ("/quit", "/exit"):
                     break
-                if text == "/reset":
-                    convo.reset()
-                    print("[context cleared]")
-                    continue
-                if args.voice:
-                    print(f"You: {text}")
+                with turn_lock:
+                    if text == "/reset":
+                        convo.reset()
+                        print("[context cleared]")
+                        continue
+                    if text in ("/look", "/photo"):
+                        if eye is None:
+                            print(
+                                "[camera] not enabled. Restart with: python ohbot_chat.py --camera"
+                            )
+                            continue
+                        look(bot, convo, eye, max_sentences, args.mode)
+                        continue
+                    if args.voice:
+                        print(f"You: {text}")
 
-                respond(bot, convo, text, max_sentences, args.mode)
+                    respond(bot, convo, text, max_sentences, args.mode)
         except KeyboardInterrupt:
             print()
         except mic_errors as e:
             print(f"\n[microphone] {e}", file=sys.stderr)
             bot.speak("I cannot hear anything. Check my microphone permission.")
+        finally:
+            if eye is not None:
+                eye.close()
 
         bot.speak("Goodbye!")
 
