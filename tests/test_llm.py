@@ -132,6 +132,19 @@ class TestStreamSentences:
         convo.reset()
         assert convo.messages == []
 
+    def test_history_is_capped_across_many_turns(self) -> None:
+        """REGRESSION: uncapped history grew every turn with no num_ctx set,
+        so a long chat eventually blew past the model's context window or
+        TIMEOUT and stayed broken -- popping only the failed turn never
+        removed the bloat that caused the failure."""
+        convo = llm.Conversation()
+        with mock.patch.object(
+            llm.requests, "post", return_value=_stream_response(["Reply."])
+        ):
+            for i in range(20):
+                list(convo.stream_sentences(f"message {i}"))
+        assert len(convo.messages) <= llm.MAX_HISTORY_MESSAGES
+
 
 class TestRespondWithAction:
     def _action_response(self, payload: dict[str, Any]) -> mock.Mock:

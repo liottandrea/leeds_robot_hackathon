@@ -50,6 +50,10 @@ class FakeOhbot(types.ModuleType):
         super().__init__(name)
         self.reset_recording()
         self.connected = True
+        # None mirrors the real module before init() opens the port: nothing
+        # for release/__exit__'s "close the actual serial connection" step
+        # to close, so that guard is exercised as a no-op here.
+        self.ser = None
         self.speechAudioFile = "ohbotData/ohbotspeech.wav"
         self.motorPos = [5] * 8
         self.motorMins = [0] * 8
@@ -216,10 +220,68 @@ class FakeFasterWhisper(types.ModuleType):
         self.WhisperModel = WhisperModel
 
 
+class FakeCv2(types.ModuleType):
+    """Stand-in for cv2, which CI does not install.
+
+    ohbot_kit.vision imports cv2 lazily inside Camera.__init__, so this only
+    needs to cover what that module calls: VideoCapture (open/read/release)
+    plus resize and imencode. Scriptable via the flags below, set before
+    constructing a vision.Camera.
+    """
+
+    def __init__(self, name: str = "cv2") -> None:
+        super().__init__(name)
+        self.open_succeeds = True
+        self.frame_present = True
+        self.imencode_succeeds = True
+        self.opened_indexes: list[int] = []
+        self.released: list[int] = []
+        self.resized: list[Any] = []
+
+        module = self
+
+        class VideoCapture:
+            def __init__(self, index: int) -> None:
+                self.index = index
+                module.opened_indexes.append(index)
+                self._open = module.open_succeeds
+                self.read_calls = 0
+
+            def isOpened(self) -> bool:  # noqa: N802 - mirrors the real API
+                return self._open
+
+            def read(self) -> Any:
+                self.read_calls += 1
+                if not module.frame_present:
+                    return False, None
+                return True, f"frame-{self.read_calls}"
+
+            def release(self) -> None:
+                self._open = False
+                module.released.append(self.index)
+
+        self.VideoCapture = VideoCapture
+
+    def resize(self, frame: Any, size: Any) -> Any:
+        self.resized.append((frame, size))
+        return frame
+
+    def imencode(self, ext: str, frame: Any) -> Any:
+        if not self.imencode_succeeds:
+            return False, None
+
+        class _Buf:
+            def tobytes(self) -> bytes:
+                return b"jpeg-bytes"
+
+        return True, _Buf()
+
+
 # Install the fakes before ohbot_kit is imported anywhere.
 _fake_ohbot = FakeOhbot()
 _fake_sd = FakeSoundDevice()
 _fake_whisper = FakeFasterWhisper()
+_fake_cv2 = FakeCv2()
 
 # The real package is `ohbot.ohbot`, imported as `from ohbot import ohbot`.
 _ohbot_pkg = types.ModuleType("ohbot")
@@ -228,6 +290,7 @@ sys.modules.setdefault("ohbot", _ohbot_pkg)
 sys.modules.setdefault("ohbot.ohbot", _fake_ohbot)
 sys.modules.setdefault("sounddevice", _fake_sd)
 sys.modules.setdefault("faster_whisper", _fake_whisper)
+sys.modules.setdefault("cv2", _fake_cv2)
 
 
 # --------------------------------------------------------------------------
@@ -246,6 +309,18 @@ def fake_ohbot() -> FakeOhbot:
 @pytest.fixture
 def fake_sd() -> FakeSoundDevice:
     return _fake_sd
+
+
+@pytest.fixture
+def fake_cv2() -> FakeCv2:
+    """The scriptable fake, reset to its defaults before each test."""
+    _fake_cv2.open_succeeds = True
+    _fake_cv2.frame_present = True
+    _fake_cv2.imencode_succeeds = True
+    _fake_cv2.opened_indexes = []
+    _fake_cv2.released = []
+    _fake_cv2.resized = []
+    return _fake_cv2
 
 
 @pytest.fixture

@@ -54,6 +54,50 @@ def _rms(block: Any) -> float:
     return float(np.sqrt(np.mean(np.square(block))))
 
 
+def _device_rate(device: int | None) -> int:
+    """The device's own nominal sample rate, or 16 kHz if it can't be read.
+
+    Forcing sd.InputStream to a rate the device doesn't run at natively is
+    the same problem as the output side (see audio.py): built-in Mac
+    hardware can't be asked to retune arbitrarily the way a class-compliant
+    USB device can, and macOS's "System default" microphone is exactly this
+    case (44.1/48 kHz native, not the 16 kHz Whisper wants). So capture at
+    whatever the device already runs at and resample_to_whisper() converts
+    down afterwards, rather than asking CoreAudio to switch rates.
+    """
+    try:
+        index = device if device is not None else sd.default.device[0]
+        rate = sd.query_devices(index)["default_samplerate"]
+        return int(rate) if rate else SAMPLE_RATE
+    except Exception:
+        return SAMPLE_RATE
+
+
+def resample_to_whisper(audio: Any, capture_rate: int) -> Any:
+    """Convert audio captured at capture_rate to the 16 kHz Whisper expects."""
+    if capture_rate == SAMPLE_RATE or len(audio) == 0:
+        return audio
+
+    ratio = capture_rate / float(SAMPLE_RATE)
+
+    # Box-average down by the integer part first. Plain decimation folds
+    # everything above 8 kHz back into the speech band as a hiss, and Whisper
+    # turns hiss into extra words.
+    width = int(ratio)
+    usable = len(audio) // width * width if width > 1 else 0
+    if usable:
+        audio = audio[:usable].reshape(-1, width).mean(axis=1)
+        ratio /= width
+
+    if abs(ratio - 1.0) > 1e-6:  # non-integer, e.g. 44100 -> 16000
+        n_out = int(len(audio) / ratio)
+        if n_out < 2:
+            return np.zeros(0, dtype=np.float32)
+        audio = np.interp(np.arange(n_out) * ratio, np.arange(len(audio)), audio)
+
+    return np.ascontiguousarray(audio, dtype=np.float32)
+
+
 class Listener:
     """Captures utterances from the microphone and transcribes them."""
 
@@ -78,6 +122,12 @@ class Listener:
         self.min_speech_seconds = min_speech_seconds
         self.noise_multiplier = noise_multiplier
         self.threshold = FLOOR
+        # Capture at the device's own rate (see _device_rate) rather than
+        # forcing SAMPLE_RATE onto it; self.capture_block keeps each block
+        # the same ~64ms duration as BLOCK/SAMPLE_RATE regardless of rate, so
+        # every block-count-based timing calculation below stays correct.
+        self.capture_rate = _device_rate(device)
+        self.capture_block = max(int(round(BLOCK * self.capture_rate / SAMPLE_RATE)), 1)
 
     # -- capture -----------------------------------------------------------
 
@@ -86,11 +136,11 @@ class Listener:
         print("Calibrating microphone, stay quiet...", flush=True)
         levels = []
         with sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=1, blocksize=BLOCK, device=self.device
+            samplerate=self.capture_rate, channels=1, blocksize=self.capture_block, device=self.device
         ) as stream:
             deadline = time.time() + CALIBRATION_SECONDS
             while time.time() < deadline:
-                block, _ = stream.read(BLOCK)
+                block, _ = stream.read(self.capture_block)
                 levels.append(_rms(block[:, 0]))
 
         peak = max(levels) if levels else 0.0
@@ -126,10 +176,10 @@ class Listener:
         max_frames = int(MAX_UTTERANCE_SECONDS * SAMPLE_RATE / BLOCK)
 
         with sd.InputStream(
-            samplerate=SAMPLE_RATE, channels=1, blocksize=BLOCK, device=self.device
+            samplerate=self.capture_rate, channels=1, blocksize=self.capture_block, device=self.device
         ) as stream:
             while True:
-                block, overflowed = stream.read(BLOCK)
+                block, overflowed = stream.read(self.capture_block)
                 if overflowed:
                     continue
                 mono = block[:, 0].copy()
@@ -161,7 +211,7 @@ class Listener:
 
         if speech_frames * BLOCK / SAMPLE_RATE < self.min_speech_seconds:
             return None
-        return np.concatenate(frames)
+        return resample_to_whisper(np.concatenate(frames), self.capture_rate)
 
     # -- transcription -----------------------------------------------------
 
